@@ -1,43 +1,38 @@
 import math
 from dataclasses import dataclass
 from typing import Type, Optional
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import torch.distributions
 
-from foundry.glm.distribution import GlmDistribution
+from foundry.glm.family import Family
 from tests.glm.distribution.util import assert_dist_equal
 from tests.util import assert_arrays_equal
 
 
-class TestGlmDistribution:
+class TestFamily:
     @dataclass
     class Params:
-        description: str
         alias: str
         call_input: dict
         expected_call_output: torch.distributions.Distribution
 
     @dataclass
     class Fixture:
-        glm_distribution: GlmDistribution
-        call_output: torch.distributions.Distribution
+        family: Family
+        call_input: dict
         expected_call_output: torch.distributions.Distribution
-        mock_log_prob: Mock
 
     @pytest.fixture(
-        ids=lambda x: x.description,
+        ids=lambda x: x.alias,
         params=[
             Params(
-                description='vanilla binomial',
                 alias='binomial',
                 call_input={'probs': torch.tensor([0., 1.]).unsqueeze(-1)},
                 expected_call_output=torch.distributions.Binomial(probs=torch.tensor([.5, 0.7311]).unsqueeze(-1)),
             ),
-            # TODO: binomial with weights/counts
             Params(
-                description='weibull',
                 alias='weibull',
                 call_input={
                     'scale': torch.tensor([0., 1.]).unsqueeze(-1),
@@ -51,27 +46,43 @@ class TestGlmDistribution:
         ]
     )
     def setup(self, request) -> Fixture:
-        # create distribution:
-        glm_distribution = GlmDistribution.from_name(name=request.param.alias)
-        # __call__
-        torch_distribution = glm_distribution(**request.param.call_input)
-        # log_prob:
-        torch_distribution.log_prob = Mock()
-        torch_distribution.log_prob.return_value = torch.zeros(1)
-        glm_distribution.log_prob(torch_distribution, value=torch.zeros(1))
-
+        family = Family.from_name(name=request.param.alias)
         return self.Fixture(
-            glm_distribution=glm_distribution,
-            call_output=torch_distribution,
+            call_input=request.param.call_input,
+            family=family,
             expected_call_output=request.param.expected_call_output,
-            mock_log_prob=torch_distribution.log_prob
         )
 
     def test_call(self, setup: Fixture):
-        assert_dist_equal(setup.call_output, setup.expected_call_output)
+        call_output = setup.family(**setup.call_input)
+        assert_dist_equal(call_output, setup.expected_call_output)
 
-    def test_log_prob(self, setup: Fixture):
-        setup.mock_log_prob.assert_called_with(torch.zeros(1))
+    @patch('foundry.glm.family.Family._validate_values')
+    def test_log_prob(self, _validate_values_mock: Mock, setup: Fixture):
+        # todo: test weights
+
+        # mock _validate_values
+        _validate_values_mock.return_value = ('value', torch.ones(1))
+
+        # mock log-prob:
+        torch_distribution = Mock()
+        torch_distribution.log_prob.return_value = torch.zeros(1)
+
+        # call with value
+        setup.family.log_prob(torch_distribution, value='value')
+
+        # make sure family.log_prob was called with value:
+        torch_distribution.log_prob.assert_called_with('value')
+
+    def test_log_cdf(self, lower_tail: bool, setup: Fixture):
+        """
+        cases:
+        - implements log_surv, wanted log_cdf/log_surv
+        - implements log_cdf
+        - implements neither
+        """
+        pass  # TODO
+        # setup.family.log_cdf(distribution=Mock(), value=None, lower_tail=lower_tail)
 
     @pytest.mark.parametrize(
         argnames=["input", "expected_output", "expected_exception"],
@@ -90,8 +101,8 @@ class TestGlmDistribution:
         torch_distribution = setup.expected_call_output
         if expected_exception:
             with pytest.raises(expected_exception):
-                GlmDistribution._validate_values(*input, distribution=torch_distribution)
+                Family._validate_values(*input, distribution=torch_distribution)
         else:
-            value, weights = GlmDistribution._validate_values(*input, distribution=torch_distribution)
+            value, weights = Family._validate_values(*input, distribution=torch_distribution)
             assert_arrays_equal(value, expected_output[0])
             assert_arrays_equal(weights, expected_output[1])

@@ -4,7 +4,7 @@ import pytest
 import torch
 from torch.distributions import Weibull
 
-from foundry.glm.distribution.survival.weibull_distribution import weibull_log_surv, CeilingWeibull
+from foundry.glm.family.survival.weibull_distribution import weibull_log_surv, CeilingWeibull
 from tests.util import assert_scalars_equal
 
 

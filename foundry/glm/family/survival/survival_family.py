@@ -5,12 +5,12 @@ from torch import distributions
 from torch.distributions import transforms
 
 from .weibull_distribution import CeilingWeibull
-from ..base import GlmDistribution
+from ..family import Family
 from ..util import subset_distribution
 
 
-class SurvivalGlmDistribution(GlmDistribution):
-    aliases = GlmDistribution.aliases.copy()
+class SurvivalFamily(Family):
+    aliases = Family.aliases.copy()
     aliases['ceiling_weibull'] = (
         CeilingWeibull,
         {
@@ -30,7 +30,7 @@ class SurvivalGlmDistribution(GlmDistribution):
                  left_truncation: Optional[torch.Tensor] = None,
                  **kwargs) -> torch.Tensor:
         """
-        :param distribution: Torch distribution.
+        :param distribution: Torch family.
         :param value: Value for log-prob.
         :param weights: Optional weights, same shape as value.
         :param is_right_censored: Optional bool tensor indicating whether the corresponding value is right-censored.

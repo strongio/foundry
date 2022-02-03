@@ -1,15 +1,15 @@
 from dataclasses import dataclass
-from typing import Optional, Sequence, Dict
+from typing import Optional, Sequence
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
 
-from foundry.glm.distribution.survival import SurvivalGlmDistribution
+from foundry.glm.family.survival import SurvivalFamily
 from tests.util import assert_arrays_equal
 
 
-class TestSurvivalGlmDistributionCensLogProb:
+class TestSurvivalFamilyCensLogProb:
     @dataclass
     class Params:
         description: str
@@ -70,20 +70,19 @@ class TestSurvivalGlmDistributionCensLogProb:
             ),
         ]
     )
-    @patch('foundry.glm.distribution.GlmDistribution.log_cdf')
+    @patch('foundry.glm.family.Family.log_cdf')
     @patch('torch.distributions.Weibull.log_prob')
     def setup(self, mock_weibull_log_prob: Mock, mock_log_cdf: Mock, request) -> Fixture:
-        params: TestSurvivalGlmDistribution_CensLogProb.Params = request.param
-        glm_dist = SurvivalGlmDistribution.from_name('weibull')
-        torch_dist = glm_dist(
+        params: TestSurvivalFamilyCensLogProb.Params = request.param
+        family = SurvivalFamily.from_name('weibull')
+        torch_dist = family(
             scale=torch.zeros_like(params.value),
             concentration=torch.zeros_like(params.value)
         )
 
-        # _get_censored_log_prob:
         mock_weibull_log_prob.return_value = 0.
         mock_log_cdf.return_value = 0.
-        glm_dist._get_censored_log_prob(
+        family._get_censored_log_prob(
             distribution=torch_dist,
             value=params.value,
             is_right_censored=params.is_right_censored,

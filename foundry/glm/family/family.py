@@ -5,16 +5,13 @@ import torch
 from torch import distributions
 from torch.distributions import transforms
 
-from foundry.glm.distribution.util import log1mexp
+from foundry.glm.family.util import log1mexp, maybe_method
 from foundry.util import to_2d
 
 
-class GlmDistribution:
+class Family:
     """
-    Why does this exist?
-    - Maps predicted params to arguments of the distribution
-    - Makes assumptions about shape
-    - Allows more complex use-cases (e.g survival analysis).
+    Combines a link-function and a torch family for use in a GLM.
     """
     aliases = {
         'binomial': (
@@ -31,14 +28,14 @@ class GlmDistribution:
     }
 
     @classmethod
-    def from_name(cls, name: str, **kwargs) -> 'GlmDistribution':
+    def from_name(cls, name: str, **kwargs) -> 'Family':
         args = cls.aliases[name]
         return cls(*args, **kwargs)
 
     def __init__(self,
-                 torch_distribution_cls: Type[torch.distributions.Distribution],
+                 distribution_cls: Type[torch.distributions.Distribution],
                  params_and_links: Dict[str, Callable]):
-        self.torch_distribution_cls = torch_distribution_cls
+        self.distribution_cls = distribution_cls
         self.params_and_links = params_and_links
 
     def __call__(self, **kwargs) -> torch.distributions.Distribution:
@@ -46,7 +43,7 @@ class GlmDistribution:
         for p, ilink in self.params_and_links.items():
             dist_kwargs[p] = ilink(kwargs.pop(p))
         dist_kwargs.update(kwargs)
-        return self.torch_distribution_cls(**dist_kwargs)
+        return self.distribution_cls(**dist_kwargs)
 
     @staticmethod
     def _validate_values(value: torch.Tensor,
@@ -63,7 +60,7 @@ class GlmDistribution:
                 raise ValueError(f"weights.shape[0] is {weights.shape[0]} but value.shape[0] is {value.shape[0]}")
 
         if len(distribution.batch_shape) != 2:
-            raise ValueError(f"distribution.batch_shape should be 2D, but it's {distribution.batch_shape}")
+            raise ValueError(f"family.batch_shape should be 2D, but it's {distribution.batch_shape}")
 
         return value, weights
 
@@ -85,7 +82,7 @@ class GlmDistribution:
         """
         Try to get the log(cdf) or log(1-cdf) using a stable method; if this fails fall back to unstable w/warning.
 
-        :param distribution: The distribution.
+        :param distribution: The family.
         :param value: The value to plug into the log cdf.
         :param lower_tail: If True, this is the CDF. If False, this is 1-CDF.
         :return: Tensor with values.
@@ -96,10 +93,10 @@ class GlmDistribution:
             methods = list(reversed(methods))
         methods.append('cdf')
 
-        result = _maybe_method(distribution, methods[0])
+        result = maybe_method(distribution, methods[0])
         if result is None:
-            # doesn't implement what we want, maybe we can get 1-what_we_want then flip it?
-            result = _maybe_method(distribution, methods[1])
+            # doesn't implement what we want, maybe we can get 1 minus what_we_want then flip it?
+            result = maybe_method(distribution, methods[1])
             if result is not None:
                 # yes! just need to flip it
                 result = log1mexp(result)
@@ -114,24 +111,3 @@ class GlmDistribution:
                     result = (1 - distribution.cdf(value)).log()
 
         return result
-
-
-def _maybe_method(obj: any, method_nm: str, fallback_value: any = None, *args, **kwargs) -> any:
-    """
-    Try to call a method of an object. If it's not a method of that object, or its a NotImplemented method, return a
-     default value.
-
-    :param obj: Object
-    :param method_nm: Name of method
-    :param fallback_value: What to return if non-existent or not implemented.
-    :param args: Arguments to method
-    :param kwargs: Kwargs to method.
-    :return: Return value of method, or `fallback_value`.
-    """
-    method = getattr(obj, method_nm, False)
-    if not method or not callable(method):
-        return fallback_value
-    try:
-        return method(*args, **kwargs)
-    except NotImplementedError:
-        return fallback_value

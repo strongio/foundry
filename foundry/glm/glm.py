@@ -9,8 +9,8 @@ import torch
 from sklearn.base import BaseEstimator
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
-from foundry.glm.distribution import GlmDistribution
-from foundry.glm.distribution.survival import SurvivalGlmDistribution
+from foundry.glm.family import Family
+from foundry.glm.family.survival import SurvivalFamily
 from foundry.util import SliceDict, FitFailedException, is_invalid, get_to_kwargs, to_tensor
 
 ModelMatrix = Union[np.ndarray, pd.DataFrame, SliceDict]
@@ -21,9 +21,9 @@ N_FIT_RETRIES = int(os.getenv('GLM_N_FIT_RETRIES', 10))
 class Glm(BaseEstimator):
 
     def __init__(self,
-                 distribution: Union[str, GlmDistribution],
+                 family: Union[str, Family],
                  penalty: Union[float, Sequence[float]] = 0.):
-        self.distribution = distribution
+        self.family = family
         self.penalty = penalty
         self.model_ = None
         self._fit_failed = 0
@@ -111,7 +111,7 @@ class Glm(BaseEstimator):
         :param verbose:
         :return:
         """
-        self.distribution = self._init_distribution(self.distribution)
+        self.family = self._init_family(self.family)
 
         if isinstance(self.penalty, (tuple, list, np.ndarray)):
             raise NotImplementedError  # TODO
@@ -121,13 +121,13 @@ class Glm(BaseEstimator):
             return self._fit(X=X, y=y, sample_weight=sample_weight, **kwargs)
 
     @staticmethod
-    def _init_distribution(distribution: Union[GlmDistribution, str]) -> GlmDistribution:
-        if isinstance(distribution, str):
-            if distribution.startswith('survival'):
-                distribution = SurvivalGlmDistribution.from_name(distribution.replace('survival', '').lstrip('_'))
+    def _init_family(family: Union[Family, str]) -> Family:
+        if isinstance(family, str):
+            if family.startswith('survival'):
+                family = SurvivalFamily.from_name(family.replace('survival', '').lstrip('_'))
             else:
-                distribution = GlmDistribution.from_name(distribution)
-        return distribution
+                family = Family.from_name(family)
+        return family
 
     @retry(retry=retry_if_exception_type(FitFailedException), reraise=True, stop=stop_after_attempt(N_FIT_RETRIES + 1))
     def _fit(self,
@@ -207,7 +207,7 @@ class Glm(BaseEstimator):
         return self
 
     def get_log_prob(self, mm_dict: dict, lp_dict: dict, reduce: bool = True) -> torch.Tensor:
-        log_probs = self.distribution.log_prob(self.distribution(**self._get_dist_kwargs(**mm_dict)), **lp_dict)
+        log_probs = self.family.log_prob(self.family(**self._get_dist_kwargs(**mm_dict)), **lp_dict)
         penalty = self._get_penalty()
         if reduce:
             log_probs = (log_probs * lp_dict['weight']).sum() + penalty

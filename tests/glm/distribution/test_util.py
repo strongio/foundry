@@ -6,7 +6,7 @@ import pytest
 import torch
 from torch.distributions import Binomial, Distribution
 
-from foundry.glm.distribution.util import subset_distribution, log1mexp
+from foundry.glm.family.util import subset_distribution, log1mexp, maybe_method
 from tests.glm.distribution.util import assert_dist_equal
 from tests.util import assert_scalars_equal
 
@@ -40,3 +40,7 @@ def test_subset_distribution(cls: Type[Distribution],
         actual = subset_distribution(cls(**params), idx)
         expected = cls(**expected_params)
         assert_dist_equal(actual, expected)
+
+
+def test_maybe_method():
+    pass  # TODO
