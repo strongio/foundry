@@ -82,7 +82,7 @@ class TestGlmDistribution:
             ((torch.ones(3, 1), torch.ones(2)), None, ValueError)
         ]
     )
-    def test__validate_shapes(self,
+    def test__validate_values(self,
                               input: tuple,
                               expected_output: tuple,
                               expected_exception: Optional[Type[Exception]],
@@ -90,8 +90,8 @@ class TestGlmDistribution:
         torch_distribution = setup.expected_call_output
         if expected_exception:
             with pytest.raises(expected_exception):
-                GlmDistribution._validate_shapes(*input, distribution=torch_distribution)
+                GlmDistribution._validate_values(*input, distribution=torch_distribution)
         else:
-            value, weights = GlmDistribution._validate_shapes(*input, distribution=torch_distribution)
+            value, weights = GlmDistribution._validate_values(*input, distribution=torch_distribution)
             assert_arrays_equal(value, expected_output[0])
             assert_arrays_equal(weights, expected_output[1])

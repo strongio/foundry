@@ -10,6 +10,7 @@ from sklearn.base import BaseEstimator
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from foundry.glm.distribution import GlmDistribution
+from foundry.glm.distribution.survival import SurvivalGlmDistribution
 from foundry.util import SliceDict, FitFailedException, is_invalid, get_to_kwargs, to_tensor
 
 ModelMatrix = Union[np.ndarray, pd.DataFrame, SliceDict]
@@ -110,14 +111,23 @@ class Glm(BaseEstimator):
         :param verbose:
         :return:
         """
-        if isinstance(self.distribution, str):
-            self.distribution = GlmDistribution.from_name(self.distribution)
+        self.distribution = self._init_distribution(self.distribution)
+
         if isinstance(self.penalty, (tuple, list, np.ndarray)):
-            raise NotImplementedError
+            raise NotImplementedError  # TODO
         else:
             if groups is not None:
                 warn("`groups` argument will be ignored because self.penalty is a single value not a sequence.")
             return self._fit(X=X, y=y, sample_weight=sample_weight, **kwargs)
+
+    @staticmethod
+    def _init_distribution(distribution: Union[GlmDistribution, str]) -> GlmDistribution:
+        if isinstance(distribution, str):
+            if distribution.startswith('survival'):
+                distribution = SurvivalGlmDistribution.from_name(distribution.replace('survival', '').lstrip('_'))
+            else:
+                distribution = GlmDistribution.from_name(distribution)
+        return distribution
 
     @retry(retry=retry_if_exception_type(FitFailedException), reraise=True, stop=stop_after_attempt(N_FIT_RETRIES + 1))
     def _fit(self,

@@ -1,10 +1,8 @@
-from dataclasses import dataclass
-
 import pytest
-import torch.distributions
+import torch
 from torch.distributions import Weibull
 
-from foundry.glm.distribution.survival import weibull_log_surv, SurvivalGlmDistribution
+from foundry.glm.distribution.survival.weibull_distribution import weibull_log_surv
 
 
 @pytest.mark.parametrize(
@@ -26,24 +24,6 @@ def test_weibull_log_surv(params: dict, value: float):
     assert round(actual.item(), 3) == round(expected.item(), 3)
 
 
-class TestSurvivalGlmDistribution:
-    @dataclass
-    class Params:
-        description: str
-        alias: str
-
-    @dataclass
-    class Fixture:
-        glm_distribution: SurvivalGlmDistribution
-
-    @pytest.fixture(
-        ids=lambda x: x.description,
-        params=[
-            Params(
-                description='weibull',
-                alias='weibull',
-            ),
-        ]
-    )
-    def setup(self, request) -> Fixture:
-        pass
+class TestCeilingWeibull:
+    # TODO
+    pass

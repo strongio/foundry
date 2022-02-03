@@ -1,27 +1,24 @@
 from typing import Optional
-from warnings import warn
 
 import torch
 from torch import distributions
-from torch.distributions import Weibull
-from torch.distributions.utils import broadcast_all
+from torch.distributions import transforms
 
-from .base import GlmDistribution
-from .util import log1mexp, subset_distribution
-
-
-def weibull_log_surv(self: Weibull, value: torch.Tensor) -> torch.Tensor:
-    value, scale, concentration = broadcast_all(value, self.scale, self.concentration)
-    log_surv = torch.zeros_like(value)
-    nonzero = ~torch.isclose(value, torch.zeros_like(value))
-    log_surv[nonzero] = -((value[nonzero] / scale[nonzero]) ** concentration[nonzero])
-    return log_surv
-
-
-Weibull.log_surv = weibull_log_surv
+from .weibull_distribution import CeilingWeibull
+from ..base import GlmDistribution
+from ..util import subset_distribution
 
 
 class SurvivalGlmDistribution(GlmDistribution):
+    aliases = GlmDistribution.aliases.copy()
+    aliases['ceiling_weibull'] = (
+        CeilingWeibull,
+        {
+            'scale': transforms.ExpTransform(),
+            'concentration': transforms.ExpTransform(),
+            'ceiling': transforms.SigmoidTransform()
+        }
+    )
 
     def log_prob(self,
                  distribution: distributions.Distribution,
@@ -43,7 +40,7 @@ class SurvivalGlmDistribution(GlmDistribution):
         :param kwargs: TODO
         :return: The log-prob tensor.
         """
-        value, weights = self._validate_shapes(value, weights, distribution)
+        value, weights = self._validate_values(value, weights, distribution)
 
         log_probs = self._get_censored_log_prob(
             distribution=distribution,
@@ -114,32 +111,3 @@ class SurvivalGlmDistribution(GlmDistribution):
         log_probs[is_uncens] = subset_distribution(distribution, is_uncens).log_prob(value[is_uncens])
 
         return log_probs
-
-    @staticmethod
-    def log_cdf(distribution: distributions.Distribution, value: torch.Tensor, lower_tail: bool) -> torch.Tensor:
-        """
-        Try to get the log(cdf) or log(1-cdf) using a stable method; if this fails fall back to unstable w/warning.
-
-        :param distribution: The distribution.
-        :param value: The value to plug into the log cdf.
-        :param lower_tail: If True, this is the CDF. If False, this is 1-CDF.
-        :return: Tensor with values.
-        """
-        # first look for the method that doesn't require flipping (log1mexp), then for the method that does:
-        methods = ['log_cdf', 'log_surv']
-        if not lower_tail:
-            methods = list(reversed(methods))
-
-        if hasattr(distribution, methods[0]):
-            method = getattr(distribution, methods[0])
-            out = method(value)
-        elif hasattr(distribution, methods[1]):
-            method = getattr(distribution, methods[1])
-            out = log1mexp(method(value))
-        else:
-            warn(f"{type(distribution).__name__} does not implement `log_cdf` or `log_surv`, results may be unstable")
-            if lower_tail:
-                out = distribution.cdf(value).log()
-            else:
-                out = (1 - distribution.cdf(value)).log()
-        return out
