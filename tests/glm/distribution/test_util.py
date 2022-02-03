@@ -8,6 +8,7 @@ from torch.distributions import Binomial, Distribution
 
 from foundry.glm.distribution.util import subset_distribution, log1mexp
 from tests.glm.distribution.util import assert_dist_equal
+from tests.util import assert_scalars_equal
 
 
 @pytest.mark.parametrize(
@@ -16,7 +17,7 @@ from tests.glm.distribution.util import assert_dist_equal
 )
 def test_log1mexp(x: float):
     x = torch.as_tensor(x)
-    assert round(log1mexp(x).item(), 3) == round(log(1 - exp(x)), 3)
+    assert_scalars_equal(log1mexp(x), log(1 - exp(x)), tol=.001)
 
 
 @pytest.mark.parametrize(

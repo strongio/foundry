@@ -38,14 +38,14 @@ class CeilingWeibull(Weibull):
         )
 
     def log_prob(self, value: torch.Tensor) -> torch.Tensor:
-        ceiling = broadcast_all(value, self.ceiling)
+        _, ceiling = broadcast_all(value, self.ceiling)
         return super().log_prob(value) + ceiling.log()
 
     def cdf(self, value: torch.Tensor) -> torch.Tensor:
         return self.ceiling * super().cdf(value)
 
     def log_cdf(self, value: torch.Tensor) -> torch.Tensor:
-        ceiling = broadcast_all(value, self.ceiling)
+        _, ceiling = broadcast_all(value, self.ceiling)
         return log1mexp(super().log_surv(value)) + ceiling.log()
 
     def log_surv(self, value: torch.Tensor) -> torch.Tensor:
