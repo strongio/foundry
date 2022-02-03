@@ -60,7 +60,8 @@ class SurvivalGlmDistribution(GlmDistribution):
 
         return log_probs * weights
 
-    def _truncate_log_probs(self,
+    @classmethod
+    def _truncate_log_probs(cls,
                             log_probs: torch.Tensor,
                             distribution: distributions.Distribution,
                             right_truncation: Optional[torch.Tensor] = None,
@@ -76,13 +77,14 @@ class SurvivalGlmDistribution(GlmDistribution):
         if right_truncation is not None:
             assert right_truncation.shape == log_probs.shape
             is_rtrunc = right_truncation > 0
-            trunc_values[is_rtrunc] = self.log_cdf(
+            trunc_values[is_rtrunc] = cls.log_cdf(
                 subset_distribution(distribution, is_rtrunc), value=right_truncation[is_rtrunc], lower_tail=False
             )
 
         return log_probs - trunc_values
 
-    def _get_censored_log_prob(self,
+    @classmethod
+    def _get_censored_log_prob(cls,
                                distribution: distributions.Distribution,
                                value: torch.Tensor,
                                is_right_censored: Optional[torch.Tensor] = None,
@@ -95,7 +97,7 @@ class SurvivalGlmDistribution(GlmDistribution):
         if is_left_censored is not None:
             assert is_left_censored.shape == value.shape
             is_uncens[is_left_censored] = False
-            log_probs[is_left_censored] = self.log_cdf(
+            log_probs[is_left_censored] = cls.log_cdf(
                 subset_distribution(distribution, is_left_censored), value=value[is_left_censored], lower_tail=True
             )
 
@@ -103,7 +105,7 @@ class SurvivalGlmDistribution(GlmDistribution):
         if is_right_censored is not None:
             assert is_right_censored.shape == value.shape
             is_uncens[is_right_censored] = False
-            log_probs[is_left_censored] = self.log_cdf(
+            log_probs[is_right_censored] = cls.log_cdf(
                 subset_distribution(distribution, is_right_censored), value=value[is_right_censored], lower_tail=False
             )
 
