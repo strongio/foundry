@@ -5,7 +5,7 @@ import torch
 from torch import distributions
 from torch.distributions import transforms
 
-from foundry.glm.family.util import log1mexp, maybe_method
+from .util import log1mexp, maybe_method
 from foundry.util import to_2d
 
 
@@ -93,10 +93,10 @@ class Family:
             methods = list(reversed(methods))
         methods.append('cdf')
 
-        result = maybe_method(distribution, methods[0])
+        result = maybe_method(distribution, method_nm=methods[0])
         if result is None:
             # doesn't implement what we want, maybe we can get 1 minus what_we_want then flip it?
-            result = maybe_method(distribution, methods[1])
+            result = maybe_method(distribution, method_nm=methods[1])
             if result is not None:
                 # yes! just need to flip it
                 result = log1mexp(result)

@@ -1,5 +1,6 @@
 from math import log, exp
-from typing import Optional, Type, Sequence
+from typing import Optional, Type, Sequence, Callable
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -58,5 +59,23 @@ def test_subset_distribution(cls: Type[Distribution],
         assert_dist_equal(actual, expected)
 
 
-def test_maybe_method():
-    pass  # TODO
+def _notimplemented(x):
+    raise NotImplementedError
+
+
+def _identity(x):
+    return x
+
+
+@pytest.mark.parametrize(
+    argnames=['a_method', 'expected_res'],
+    argvalues=[
+        (_notimplemented, False),
+        (_identity, 1.)
+    ]
+)
+def test_maybe_method(a_method: Callable, expected_res: any):
+    obj = Mock()
+    obj.fake_method = a_method
+    res = maybe_method(obj, method_nm='fake_method', fallback_value=False, x=1.)
+    assert res == expected_res
