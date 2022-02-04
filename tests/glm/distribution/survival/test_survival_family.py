@@ -70,8 +70,8 @@ class TestSurvivalFamilyCensLogProb:
             ),
         ]
     )
-    @patch('foundry.glm.family.Family.log_cdf')
-    @patch('torch.distributions.Weibull.log_prob')
+    @patch('foundry.glm.family.Family.log_cdf', autospec=True)
+    @patch('torch.distributions.Weibull.log_prob', autospec=True)
     def setup(self, mock_weibull_log_prob: Mock, mock_log_cdf: Mock, request) -> Fixture:
         params: TestSurvivalFamilyCensLogProb.Params = request.param
         family = SurvivalFamily.from_name('weibull')
@@ -94,7 +94,7 @@ class TestSurvivalFamilyCensLogProb:
         actual_cdf_upper_tail_inputs = [
             call[1]['value'] for call in mock_log_cdf.call_args_list if not call[1]['lower_tail']
         ]
-        actual_log_prob_inputs = [call[0][0] for call in mock_weibull_log_prob.call_args_list]
+        actual_log_prob_inputs = [call[0][1] for call in mock_weibull_log_prob.call_args_list]
 
         return self.Fixture(
             expected_cdf_upper_tail_input=params.expected_input_cdf_upper_tail,

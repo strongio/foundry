@@ -57,7 +57,7 @@ class TestFamily:
         call_output = setup.family(**setup.call_input)
         assert_dist_equal(call_output, setup.expected_call_output)
 
-    @patch('foundry.glm.family.Family._validate_values')
+    @patch('foundry.glm.family.Family._validate_values', autospec=True)
     def test_log_prob(self, _validate_values_mock: Mock, setup: Fixture):
         # todo: test weights
 
