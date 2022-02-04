@@ -15,9 +15,25 @@ from tests.util import assert_scalars_equal
     argnames=["x"],
     argvalues=[(x,) for x in np.linspace(-0.1, -9.0, 10)]
 )
-def test_log1mexp(x: float):
-    x = torch.as_tensor(x)
+def test_log1mexp_equiv(x: float):
     assert_scalars_equal(log1mexp(x), log(1 - exp(x)), tol=.001)
+
+
+@pytest.mark.parametrize(
+    ids=['very small', 'very large'],
+    argnames=["x"],
+    argvalues=[(-3.3119e-17,), (-700.,)]
+)
+def test_log1mexp_stable(x: float):
+    try:
+        unstable = log(1 - exp(x))
+        # very large
+        assert unstable == 0
+        assert log1mexp(torch.as_tensor(x, dtype=torch.double)).abs() > 0
+    except ValueError as e:
+        # very small
+        assert 'domain' in str(e)
+        assert not torch.isinf(log1mexp(x))
 
 
 @pytest.mark.parametrize(

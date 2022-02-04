@@ -74,15 +74,6 @@ class TestFamily:
         # make sure family.log_prob was called with value:
         torch_distribution.log_prob.assert_called_with('value')
 
-    def test_log_cdf(self, lower_tail: bool, setup: Fixture):
-        """
-        cases:
-        - implements log_surv, wanted log_cdf/log_surv
-        - implements log_cdf
-        - implements neither
-        """
-        pass  # TODO
-        # setup.family.log_cdf(distribution=Mock(), value=None, lower_tail=lower_tail)
 
     @pytest.mark.parametrize(
         argnames=["input", "expected_output", "expected_exception"],

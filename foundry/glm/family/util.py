@@ -10,11 +10,13 @@ def log1mexp(x: torch.Tensor) -> torch.Tensor:
     Implement a numerically stable ``log(1 - exp(x))``, as described in
     https://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf
     """
+    out_dtype = x.dtype if torch.is_tensor(x) and torch.is_floating_point(x) else torch.get_default_dtype()
+    x = torch.as_tensor(x, dtype=torch.double)
     out = torch.empty_like(x)
-    mask = -x < -0.693
+    mask = -x < 0.693
     out[mask] = torch.log(-torch.expm1(x[mask]))
     out[~mask] = torch.log1p(-torch.exp(x[~mask]))
-    return out
+    return out.to(dtype=out_dtype)
 
 
 def subset_distribution(
