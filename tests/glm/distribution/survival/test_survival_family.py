@@ -106,6 +106,9 @@ class TestSurvivalFamilyCensLogProb:
         )
 
     def test_left_cens(self, setup: Fixture):
+        """
+        Test that log_cdf is called with lower_tail=True for all/only left-censored inputs.
+        """
         if setup.expected_cdf_lower_tail_input is None:
             assert not len(setup.actual_cdf_lower_tail_inputs), \
                 "no expected_cdf_lower_tail_input, but log_cdf called with lower_tail=True"
@@ -116,6 +119,9 @@ class TestSurvivalFamilyCensLogProb:
                                 setup.expected_cdf_lower_tail_input)
 
     def test_right_cens(self, setup: Fixture):
+        """
+        Test that log_cdf is called with lower_tail=False for all/only right-censored inputs.
+        """
         if setup.expected_cdf_upper_tail_input is None:
             assert not len(setup.actual_cdf_upper_tail_inputs), \
                 "no expected_cdf_upper_tail_input, but log_cdf called with lower_tail=False"
@@ -126,5 +132,10 @@ class TestSurvivalFamilyCensLogProb:
                                 setup.expected_cdf_upper_tail_input)
 
     def test_uncens(self, setup: Fixture):
+        """
+        Test that log_prob is called for all/only uncensored inputs.
+        """
         assert len(setup.actual_log_prob_inputs) == 1, "log_prob called more than once"
         assert_arrays_equal(setup.actual_log_prob_inputs[0], setup.expected_log_prob_input)
+
+# todo: trunc

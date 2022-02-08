@@ -1,13 +1,12 @@
 from math import log, exp
-from typing import Optional, Type, Sequence, Callable
-from unittest.mock import Mock
+from typing import Optional, Type, Sequence
 
 import numpy as np
 import pytest
 import torch
 from torch.distributions import Binomial, Distribution
 
-from foundry.glm.family.util import subset_distribution, log1mexp, maybe_method
+from foundry.glm.family.util import subset_distribution, log1mexp
 from tests.glm.distribution.util import assert_dist_equal
 from tests.util import assert_scalars_equal
 
@@ -57,25 +56,3 @@ def test_subset_distribution(cls: Type[Distribution],
         actual = subset_distribution(cls(**params), idx)
         expected = cls(**expected_params)
         assert_dist_equal(actual, expected)
-
-
-def _notimplemented(x):
-    raise NotImplementedError
-
-
-def _identity(x):
-    return x
-
-
-@pytest.mark.parametrize(
-    argnames=['a_method', 'expected_res'],
-    argvalues=[
-        (_notimplemented, False),
-        (_identity, 1.)
-    ]
-)
-def test_maybe_method(a_method: Callable, expected_res: any):
-    obj = Mock()
-    obj.fake_method = a_method
-    res = maybe_method(obj, method_nm='fake_method', fallback_value=False, x=1.)
-    assert res == expected_res

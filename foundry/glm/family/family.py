@@ -5,7 +5,7 @@ import torch
 from torch import distributions
 from torch.distributions import transforms
 
-from .util import log1mexp, maybe_method
+from .util import log1mexp
 from foundry.util import to_2d
 
 
@@ -93,10 +93,10 @@ class Family:
             methods = list(reversed(methods))
         methods.append('cdf')
 
-        result = maybe_method(distribution, method_nm=methods[0])
+        result = _maybe_method(distribution, method_nm=methods[0])
         if result is None:
             # doesn't implement what we want, maybe we can get 1 minus what_we_want then flip it?
-            result = maybe_method(distribution, method_nm=methods[1])
+            result = _maybe_method(distribution, method_nm=methods[1])
             if result is not None:
                 # yes! just need to flip it
                 result = log1mexp(result)
@@ -111,3 +111,24 @@ class Family:
                     result = (1 - distribution.cdf(value)).log()
 
         return result
+
+
+def _maybe_method(obj: any, method_nm: str, fallback_value: any = None, *args, **kwargs) -> any:
+    """
+    Try to call a method of an object. If it's not a method of that object, or its a NotImplemented method, return a
+     default value.
+
+    :param obj: Object
+    :param method_nm: Name of method
+    :param fallback_value: What to return if non-existent or not implemented.
+    :param args: Arguments to method
+    :param kwargs: Kwargs to method.
+    :return: Return value of method, or `fallback_value`.
+    """
+    method = getattr(obj, method_nm, False)
+    if not method or not callable(method):
+        return fallback_value
+    try:
+        return method(*args, **kwargs)
+    except NotImplementedError:
+        return fallback_value

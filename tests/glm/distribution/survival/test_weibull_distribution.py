@@ -19,7 +19,10 @@ from tests.util import assert_scalars_equal
         ({'scale': 1, 'concentration': 2}, 1.),
     ]
 )
-def test_weibull_log_surv(params: dict, value: float):
+def test_weibull_log_surv_equiv(params: dict, value: float):
+    """
+    Test that weibull exp(log-surv) is surv
+    """
     weibull = Weibull(**params)
     value = torch.as_tensor(value)
     expected = 1 - weibull.cdf(value)
@@ -61,17 +64,26 @@ class TestCeilingWeibull:
         )
 
     def test_log_prob(self, setup: Fixture):
+        """
+        Test the log-prob for ceiling distribution == adjusted log prob for non-ceiling
+        """
         expected = setup.weibull.log_prob(setup.value).exp() * setup.ceiling_weibull.ceiling
         actual = setup.ceiling_weibull.log_prob(setup.value).exp()
         assert_scalars_equal(expected, actual, tol=.001)
         assert round(expected.item(), 3) == round(actual.item(), 3)
 
     def test_cdf(self, setup: Fixture):
+        """
+        Test that cdf for ceiling distribution == adjusted cdf for non-ceiling
+        """
         expected = setup.weibull.cdf(setup.value) * setup.ceiling_weibull.ceiling
         actual = setup.ceiling_weibull.cdf(setup.value)
         assert_scalars_equal(expected, actual, tol=.001)
 
     def test_log_cdf(self, setup: Fixture):
+        """
+        Test that log-cdf for ceiling distribution == adjusted log-cdf for non-ceiling
+        """
         expected = setup.weibull.cdf(setup.value) * setup.ceiling_weibull.ceiling
         actual = setup.ceiling_weibull.log_cdf(setup.value).exp()
         assert_scalars_equal(expected, actual, tol=.001)

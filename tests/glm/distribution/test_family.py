@@ -1,9 +1,10 @@
-import itertools
 import math
+import pdb
 import warnings
-from dataclasses import dataclass
-from typing import Type, Optional, Sequence
-from unittest.mock import Mock, patch
+from collections import namedtuple
+from dataclasses import dataclass, fields
+from typing import Type, Optional, Sequence, Collection
+from unittest.mock import Mock, patch, MagicMock
 
 import pytest
 import torch.distributions
@@ -14,179 +15,127 @@ from tests.glm.distribution.util import assert_dist_equal
 from tests.util import assert_arrays_equal
 
 
-class TestFamilyCall:
-    @dataclass
-    class Params:
-        alias: str
-        call_input: dict
-        expected_call_output: torch.distributions.Distribution
-
-    @dataclass
-    class Fixture:
-        family: Family
-        call_input: dict
-        expected_call_output: torch.distributions.Distribution
-
-    @pytest.fixture(
-        ids=lambda x: x.alias,
-        params=[
-            Params(
-                alias='binomial',
-                call_input={'probs': torch.tensor([0., 1.]).unsqueeze(-1)},
-                expected_call_output=torch.distributions.Binomial(probs=torch.tensor([.5, 0.7311]).unsqueeze(-1)),
-            ),
-            Params(
-                alias='weibull',
-                call_input={
+@pytest.mark.parametrize(
+    ids=lambda *args: args[0],
+    argnames=['alias', 'call_input', 'expected_call_output'],
+    argvalues=[
+        (
+                'binomial',
+                {'probs': torch.tensor([0., 1.]).unsqueeze(-1)},
+                torch.distributions.Binomial(probs=torch.tensor([.5, 0.7311]).unsqueeze(-1)),
+        ),
+        (
+                'weibull',
+                {
                     'scale': torch.tensor([0., 1.]).unsqueeze(-1),
                     'concentration': torch.tensor([0., 0.]).unsqueeze(-1)
                 },
-                expected_call_output=torch.distributions.Weibull(
+                torch.distributions.Weibull(
                     scale=torch.tensor([1., math.exp(1.)]).unsqueeze(-1),
                     concentration=torch.ones(2).unsqueeze(-1)
                 ),
-            ),
-        ]
-    )
-    def setup(self, request) -> Fixture:
-        family = Family.from_name(name=request.param.alias)
-        return self.Fixture(
-            call_input=request.param.call_input,
-            family=family,
-            expected_call_output=request.param.expected_call_output,
-        )
-
-    def test_call(self, setup: Fixture):
-        call_output = setup.family(**setup.call_input)
-        assert_dist_equal(call_output, setup.expected_call_output)
-
-
-class TestFamilyLogProb:
-
-    @patch('foundry.glm.family.Family._validate_values', autospec=True)
-    def test_log_prob(self, _validate_values_mock: Mock):
-        # todo: test weights
-
-        # mock _validate_values
-        _validate_values_mock.return_value = ('value', torch.ones(1))
-
-        # mock log-prob:
-        family = Family(distribution_cls=Mock(), params_and_links={})
-        torch_distribution = Mock()
-        torch_distribution.log_prob.return_value = torch.zeros(1)
-
-        # call with value
-        family.log_prob(torch_distribution, value='value')
-
-        # make sure family.log_prob was called with value:
-        torch_distribution.log_prob.assert_called_with('value')
+        ),
+    ]
+)
+def test_family_call(alias: str, call_input: dict, expected_call_output: torch.distributions.Distribution):
+    """
+    Calling a family instance w/tensors passes the tensors thru ilinks and creates a torch distribution
+    """
+    family = Family.from_name(name=alias)
+    call_output = family(**call_input)
+    assert_dist_equal(call_output, expected_call_output)
 
 
 class TestFamilyLogCdf:
-    @dataclass
-    class Params:
-        description: str
-        lower_tail: bool
-        implemented: Sequence[str]
-        dist_cdf_return_value: Optional[torch.Tensor]
-        expected_result: any
+    """
+    Test that the result came from the desired method: either log_cdf, log_surv, or cdf.
+    """
 
-    @dataclass
-    class Fixture:
-        actual_result: any
-        expected_result: any
+    Params = namedtuple('Params', ['lower_tail', 'implemented', 'expected_result'])
 
-    @pytest.fixture(
-        ids=lambda x: x.description,
-        params=[
+    @pytest.mark.parametrize(
+        argnames=Params._fields,
+        argvalues=[
             Params(
-                description="Want log cdf, implements neither log_*, calls log(cdf())",
                 lower_tail=True,
                 implemented=[],
-                dist_cdf_return_value=torch.ones(1),
-                expected_result=torch.log(torch.ones(1))
+                expected_result='cdf().log()'
             ),
             Params(
-                description="Want log 1-cdf, implements neither log_*, calls log(1-cdf())",
                 lower_tail=False,
                 implemented=[],
-                dist_cdf_return_value=torch.zeros(1),
-                expected_result=torch.log(torch.ones(1))
+                expected_result='(1-cdf()).log()'
             ),
             Params(
-                description="Want log cdf, implements log_surv, calls 1-log_surv",
                 lower_tail=True,
                 implemented=['log_surv'],
-                dist_cdf_return_value=None,
-                expected_result='log1mexp(log_surv)'
+                expected_result='log1mexp(log_surv())'
             ),
             Params(
-                description="Want log surv, implements log_surv, calls log_surv",
                 lower_tail=False,
                 implemented=['log_surv'],
-                dist_cdf_return_value=None,
-                expected_result='log_surv'
+                expected_result='log_surv()'
             ),
             Params(
-                description="Want log cdf, implements log_cdf, calls log_cdf",
                 lower_tail=True,
                 implemented=['log_cdf'],
-                dist_cdf_return_value=None,
-                expected_result='log_cdf'
+                expected_result='log_cdf()'
             ),
             Params(
-                description="Want log surv, implements log_cdf, calls 1-log_cdf",
                 lower_tail=False,
                 implemented=['log_cdf'],
-                dist_cdf_return_value=None,
-                expected_result='log1mexp(log_cdf)'
+                expected_result='log1mexp(log_cdf())'
             ),
             Params(
-                description="Want log cdf, implements both, calls log_cdf",
                 lower_tail=True,
                 implemented=['log_cdf', 'log_surv'],
-                dist_cdf_return_value=None,
-                expected_result='log_cdf'
+                expected_result='log_cdf()'
             ),
             Params(
-                description="Want log surv, implements both, calls log_surv",
                 lower_tail=False,
                 implemented=['log_cdf', 'log_surv'],
-                dist_cdf_return_value=None,
-                expected_result='log_surv'
+                expected_result='log_surv()'
             ),
         ]
     )
-    @patch('foundry.glm.family.family.maybe_method', autospec=True)
-    @patch('foundry.glm.family.family.log1mexp')
-    def setup(self, mock_log1mexp: Mock, mock_maybe_method: Mock, request: 'FixtureRequest'):
-        # like the real maybe_method, return None if not implemented
-        # otherwise return the method that was used, so we know we used it
-        mock_maybe_method.side_effect = \
-            lambda *a, **k: k['method_nm'] if k['method_nm'] in request.param.implemented else None
+    @patch('foundry.glm.family.family.log1mexp', autospec=True)
+    def test_log_cdf(self,
+                     mock_log1mexp: Mock,
+                     lower_tail: bool,
+                     implemented: Collection[str],
+                     expected_result: str):
+        mock_distribution = Mock()
 
-        #
+        # log_surv:
+        mock_distribution.log_surv = Mock()
+        if 'log_surv' in implemented:
+            mock_distribution.log_surv.return_value = 'log_surv()'
+        else:
+            mock_distribution.log_surv.side_effect = NotImplementedError
+
+        # log_cdf:
+        mock_distribution.log_cdf = Mock()
+        if 'log_cdf' in implemented:
+            mock_distribution.log_cdf.return_value = 'log_cdf()'
+        else:
+            mock_distribution.log_cdf.side_effect = NotImplementedError
+
+        # log1mexp:
         mock_log1mexp.side_effect = lambda x: f'log1mexp({x})'
 
-        #
-        mock_distribution = Mock()
-        mock_distribution.cdf.return_value = request.param.dist_cdf_return_value
+        # cdf:
+        mock_distribution.cdf.return_value = MagicMock()
+        mock_distribution.cdf.return_value.log.return_value = 'cdf().log()'
+        mock_distribution.cdf.return_value.__rsub__.return_value.log.return_value = '(1-cdf()).log()'
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             result = Family.log_cdf(
                 distribution=mock_distribution,
                 value='value',
-                lower_tail=request.param.lower_tail
+                lower_tail=lower_tail
             )
-
-        return self.Fixture(
-            actual_result=result,
-            expected_result=request.param.expected_result,
-        )
-
-    def test_results(self, setup: Fixture):
-        assert setup.expected_result == setup.actual_result
+        assert result == expected_result
 
 
 @pytest.mark.parametrize(
