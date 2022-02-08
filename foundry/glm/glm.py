@@ -290,7 +290,7 @@ class Glm:
 
         if isinstance(y, dict):
             y = y['value']
-        y = to_2d(y)
+        y = to_2d(np.asanyarray(y))
 
         out = torch.nn.ModuleDict()
         for dp in self.family.params:
@@ -354,7 +354,7 @@ class Glm:
                 kwargs_as_is = {k: kwargs_as_is for k in kwargs}
             for k in list(kwargs):
                 if not kwargs_as_is.get(k, False) and isinstance(kwargs[k], (torch.Tensor, np.ndarray, pd.Series)):
-                    kwargs[k] = to_2d(torch.as_tensor(np.asanyarray(kwargs[k]), **get_to_kwargs(self.module_)))
+                    kwargs[k] = to_2d(to_tensor(kwargs[k], **get_to_kwargs(self.module_)))
             result = result(**kwargs)
         elif kwargs:
             warn(f"Ignoring {set(kwargs)}, `{dist.__class__.__name__}.{type}` not callable.")

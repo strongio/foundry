@@ -105,7 +105,7 @@ def to_1d(arr: ArrayType) -> ArrayType:
         raise ValueError("Unable to squeeze array to 1d.")
     if not arr.shape:
         # squeezed to scalar
-        arr = arr.unsqueeze(0)
+        arr = arr[None, ...]
     return arr
 
 
@@ -128,7 +128,7 @@ def to_2d(arr: ArrayType) -> ArrayType:
             raise ValueError("Unable to squeeze array to 2d.")
     else:
         if len(arr.shape) == 0:
-            arr = arr.unsqueeze(0)
+            arr = arr[None, ...]
         if len(arr.shape) == 1:
-            arr = arr.unsqueeze(-1)
+            arr = arr[..., None]
     return arr
