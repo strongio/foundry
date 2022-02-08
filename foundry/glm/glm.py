@@ -6,90 +6,55 @@ from warnings import warn
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.base import BaseEstimator
+
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
+from tqdm import tqdm
 
 from foundry.glm.family import Family
 from foundry.glm.family.survival import SurvivalFamily
-from foundry.util import SliceDict, FitFailedException, is_invalid, get_to_kwargs, to_tensor
+from foundry.util import FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d
 
-ModelMatrix = Union[np.ndarray, pd.DataFrame, SliceDict]
+ModelMatrix = Union[np.ndarray, pd.DataFrame, dict]
 
 N_FIT_RETRIES = int(os.getenv('GLM_N_FIT_RETRIES', 10))
 
+from sklearn.exceptions import NotFittedError
 
-class Glm(BaseEstimator):
+
+class Glm:
 
     def __init__(self,
                  family: Union[str, Family],
                  penalty: Union[float, Sequence[float]] = 0.):
         self.family = family
         self.penalty = penalty
-        self.model_ = None
+
+        # set in _init_module:
+        self._module_ = None
+        self.expected_model_mat_params_ = None
+
+        # updated on each fit():
         self._fit_failed = 0
 
-    def _build_model_mats(self,
-                          X: ModelMatrix,
-                          y: Optional[ModelMatrix],
-                          sample_weight: Optional[np.ndarray],
-                          expect_y: bool = False) -> Tuple[dict, dict]:
-        """
+    @property
+    def module_(self) -> torch.nn.ModuleDict:
+        if self._module_ is None:
+            raise NotFittedError("Tried to access `module_` prior to fitting.")
+        return self._module_
 
-        :param X: A dataframe/ndarray/tensor, or dictionary of these.
-        :param y: An optional dataframe/ndarray/tensor, or dictionary of these.
-        :param sample_weight: Optional sample-weights
-        :param expect_y: If True, then will raise if y is not present.
-        :return: A dictionary of model-mat kwargs (for prediction) and of target-related kwargs
-         (for evaluation i.e. log-prob).
-        """
-        _to_kwargs = get_to_kwargs(self.model_)
+    @module_.setter
+    def module_(self, value: torch.nn.ModuleDict):
+        self._module_ = value
 
-        # convert to dict:
-        if isinstance(X, dict):
-            Xdict = X
-        else:
-            Xdict = {p: X for p in self.expected_model_mat_params_}
+    @property
+    def expected_model_mat_params_(self) -> Sequence[str]:
+        if self._expected_model_mat_params_ is None:
+            raise NotFittedError("Tried to access `expected_model_mat_params_` prior to fitting.")
+        return self._expected_model_mat_params_
 
-        # convert to tensors:
-        for nm in list(Xdict):
-            if nm not in self.expected_model_mat_params_:
-                raise RuntimeError(
-                    f"In original call to `fit()`, did not get predictors for param `{nm}`, but now that's included."
-                )
-            Xdict[nm] = to_tensor(Xdict[nm], **_to_kwargs)
-            if is_invalid(Xdict[nm]):
-                raise ValueError(f"nans/infs in X ({nm})")
-
-        if not expect_y:
-            return Xdict, {}
-
-        # handle target:
-        if y is None:
-            raise ValueError("Must pass `y` when fitting.")
-        else:
-            if isinstance(y, dict):
-                assert 'value' in y
-                ydict = y.copy()
-            else:
-                ydict = {'value': y}
-
-        y_len = ydict['value'].shape[0]
-
-        if sample_weight is None:
-            sample_weight = torch.ones(y_len)
-
-        assert (sample_weight >= 0).all()
-        ydict['weight'] = sample_weight
-
-        for k in list(ydict):
-            if hasattr(ydict[k], '__iter__'):  # TODO: less hacky way to do this?
-                ydict[k] = to_tensor(ydict[k])
-                if is_invalid(ydict[k]):
-                    raise ValueError(f"nans/infs in {k}")
-                if ydict[k].shape[0] != y_len:
-                    raise ValueError(f"{k}.shape[0] does not match y.shape[0]")
-
-        return Xdict, ydict
+    @expected_model_mat_params_.setter
+    def expected_model_mat_params_(self, value: Sequence[str]):
+        self._expected_model_mat_params_ = value
 
     def fit(self,
             X: ModelMatrix,
@@ -149,17 +114,17 @@ class Glm(BaseEstimator):
             reset = True
 
         # build model:
-        if self.model_ is None or reset:
-            self.model_ = self._build_model(X, y, sample_weight=sample_weight)
+        if self._module_ is None or reset:
+            self.module_ = self._init_module(X, y)
+
+        # optimizer:
+        self.optimizer_ = self._init_optimizer()
 
         # build model-mats:
         mm_dict, lp_dict = self._build_model_mats(X, y, sample_weight, expect_y=True)
 
-        # optimizer:
-        self.optimizer_ = self._initialize_optimizer()
-
         # progress bar:
-        prog = self._initialize_pb()
+        prog = self._init_pb()
 
         # 'closure' for torch.optimizer.Optimizer.step method:
         epoch = 0
@@ -214,8 +179,111 @@ class Glm(BaseEstimator):
             log_probs = log_probs / lp_dict['weight']
         return log_probs
 
-    def _get_dist_kwargs(self, **kwargs) -> dict:
+    def _get_penalty(self) -> torch.Tensor:
         raise NotImplementedError
+
+    def _get_dist_kwargs(self, **kwargs) -> dict:
+        """
+        Call each entry in the module_ dict to get predicted family params.
+        """
+        raise NotImplementedError
+
+    def _build_model_mats(self,
+                          X: ModelMatrix,
+                          y: Optional[ModelMatrix],
+                          sample_weight: Optional[np.ndarray],
+                          expect_y: bool = False) -> Tuple[dict, dict]:
+        """
+        :param X: A dataframe/ndarray/tensor, or dictionary of these.
+        :param y: An optional dataframe/ndarray/tensor, or dictionary of these.
+        :param sample_weight: Optional sample-weights
+        :param expect_y: If True, then will raise if y is not present.
+        :return: Two dictionaries: one of model-mat kwargs (for prediction) and one of target-related kwargs
+         (for evaluation i.e. log-prob).
+        """
+        _to_kwargs = get_to_kwargs(self.module_)
+
+        # convert to dict:
+        if isinstance(X, dict):
+            Xdict = X.copy()
+        else:
+            Xdict = {p: X for p in self.expected_model_mat_params_}
+
+        # validate:
+        if set(Xdict) != set(self.expected_model_mat_params_):
+            raise ValueError(
+                f"X has keys {set(Xdict)} but (from prev. call to fit()), was "
+                f"expecting {self.expected_model_mat_params_}"
+            )
+
+        # convert to tensors:
+        x_len = None
+        for nm in self.expected_model_mat_params_:
+            Xdict[nm] = to_tensor(Xdict[nm], **_to_kwargs)
+            assert len(Xdict[nm].shape) == 2, f"len(X['{nm}'].shape)!=2"
+            if x_len is None:
+                x_len = Xdict[nm].shape[0]
+            elif x_len != Xdict[nm].shape[0]:
+                raise ValueError("Not all X entries have same shape[0]")
+            if is_invalid(Xdict[nm]):
+                raise ValueError(f"nans/infs in X ({nm})")
+
+        if not expect_y:
+            return Xdict, {}
+
+        # handle target:
+        if y is None:
+            raise ValueError("Must pass `y` when fitting.")
+        else:
+            if isinstance(y, dict):
+                assert 'value' in y
+                ydict = y.copy()
+            else:
+                ydict = {'value': y}
+
+        y_len = ydict['value'].shape[0]
+
+        if x_len != y_len:
+            raise ValueError("Expected X.shape[0] to match y.shape[0]")
+
+        if 'weight' in ydict:
+            if sample_weight is not None:
+                raise ValueError("Please pass either `sample_weight` or y=dict(weight=), but not both.")
+        else:
+            ydict['weight'] = sample_weight
+
+        if ydict.get('weight', None) is None:
+            ydict['weight'] = torch.ones(y_len)
+        else:
+            assert (ydict['weight'] >= 0).all()
+
+        for k in list(ydict):
+            if not hasattr(ydict[k], '__iter__'):
+                # wait until we have a use-case
+                raise NotImplementedError(
+                    f"Unclear how to handle {k}, please report this error to the package maintainer"
+                )
+            ydict[k] = to_2d(to_tensor(ydict[k], **_to_kwargs))
+            if is_invalid(ydict[k]):
+                raise ValueError(f"nans/infs in {k}")
+            if ydict[k].shape[0] != y_len:
+                raise ValueError(f"{k}.shape[0] does not match y.shape[0]")
+
+        return Xdict, ydict
+
+    def _init_module(self, X: ModelMatrix, y: ModelMatrix) -> torch.nn.ModuleDict:
+        raise NotImplementedError
+
+    def _init_optimizer(self) -> torch.optim.Optimizer:
+        return torch.optim.LBFGS(
+            self.module_.parameters(), max_iter=10, line_search_fn='strong_wolfe', lr=.25
+        )
+
+    def _init_pb(self) -> Optional[tqdm]:
+        max_eval = self.optimizer_.param_groups[0].get('max_eval', False)
+        if max_eval:
+            return tqdm(total=self.optimizer_.param_groups[0]['max_eval'])
+        return None
 
     @torch.no_grad()
     def predict(self,

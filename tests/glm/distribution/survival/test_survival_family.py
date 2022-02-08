@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from foundry.glm.family.survival import SurvivalFamily
-from tests.util import assert_arrays_equal
+from tests.util import assert_tensors_equal
 
 
 class TestSurvivalFamilyCensLogProb:
@@ -115,8 +115,8 @@ class TestSurvivalFamilyCensLogProb:
         else:
             assert len(setup.actual_cdf_lower_tail_inputs) == 1, \
                 "log_cdf called with lower_tail=True more than once"
-            assert_arrays_equal(setup.actual_cdf_lower_tail_inputs[0],
-                                setup.expected_cdf_lower_tail_input)
+            assert_tensors_equal(setup.actual_cdf_lower_tail_inputs[0],
+                                 setup.expected_cdf_lower_tail_input)
 
     def test_right_cens(self, setup: Fixture):
         """
@@ -128,14 +128,14 @@ class TestSurvivalFamilyCensLogProb:
         else:
             assert len(setup.actual_cdf_upper_tail_inputs) == 1, \
                 "log_cdf called w/lower_tail=False more than once"
-            assert_arrays_equal(setup.actual_cdf_upper_tail_inputs[0],
-                                setup.expected_cdf_upper_tail_input)
+            assert_tensors_equal(setup.actual_cdf_upper_tail_inputs[0],
+                                 setup.expected_cdf_upper_tail_input)
 
     def test_uncens(self, setup: Fixture):
         """
         Test that log_prob is called for all/only uncensored inputs.
         """
         assert len(setup.actual_log_prob_inputs) == 1, "log_prob called more than once"
-        assert_arrays_equal(setup.actual_log_prob_inputs[0], setup.expected_log_prob_input)
+        assert_tensors_equal(setup.actual_log_prob_inputs[0], setup.expected_log_prob_input)
 
 # todo: trunc

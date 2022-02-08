@@ -1,9 +1,7 @@
 import math
-import pdb
 import warnings
 from collections import namedtuple
-from dataclasses import dataclass, fields
-from typing import Type, Optional, Sequence, Collection
+from typing import Type, Optional, Collection
 from unittest.mock import Mock, patch, MagicMock
 
 import pytest
@@ -12,7 +10,7 @@ import torch.distributions
 from foundry.glm.family import Family
 
 from tests.glm.distribution.util import assert_dist_equal
-from tests.util import assert_arrays_equal
+from tests.util import assert_tensors_equal
 
 
 @pytest.mark.parametrize(
@@ -157,5 +155,5 @@ def test__validate_values(input: tuple,
             Family._validate_values(*input, distribution=torch_distribution)
     else:
         value, weights = Family._validate_values(*input, distribution=torch_distribution)
-        assert_arrays_equal(value, expected_output[0])
-        assert_arrays_equal(weights, expected_output[1])
+        assert_tensors_equal(value, expected_output[0])
+        assert_tensors_equal(weights, expected_output[1])
