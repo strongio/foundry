@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Type, Optional, Tuple
+from typing import Callable, Dict, Type, Optional, Tuple, Sequence
 from warnings import warn
 
 import torch
@@ -38,6 +38,10 @@ class Family:
         self.distribution_cls = distribution_cls
         self.params_and_links = params_and_links
 
+    @property
+    def params(self) -> Sequence[str]:
+        return list(self.params_and_links)
+
     def __call__(self, **kwargs) -> torch.distributions.Distribution:
         dist_kwargs = {}
         for p, ilink in self.params_and_links.items():
@@ -67,8 +71,8 @@ class Family:
     def log_prob(self,
                  distribution: torch.distributions.Distribution,
                  value: torch.Tensor,
-                 weights: Optional[torch.Tensor] = None,
-                 **kwargs) -> torch.Tensor:
+                 weights: Optional[torch.Tensor] = None) -> torch.Tensor:
+
         value, weights = self._validate_values(value, weights, distribution)
 
         # TODO: support discretized

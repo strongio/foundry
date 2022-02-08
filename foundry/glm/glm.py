@@ -1,6 +1,6 @@
 import os
 from time import sleep
-from typing import Union, Sequence, Optional, Callable, Tuple
+from typing import Union, Sequence, Optional, Callable, Tuple, Dict
 from warnings import warn
 
 import numpy as np
@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 from foundry.glm.family import Family
 from foundry.glm.family.survival import SurvivalFamily
+from foundry.glm.util import NoWeightModule
 from foundry.util import FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d
 
 ModelMatrix = Union[np.ndarray, pd.DataFrame, dict]
@@ -78,7 +79,7 @@ class Glm:
         """
         self.family = self._init_family(self.family)
 
-        if isinstance(self.penalty, (tuple, list, np.ndarray)):
+        if isinstance(self.penalty, (tuple, list)):
             raise NotImplementedError  # TODO
         else:
             if groups is not None:
@@ -124,7 +125,9 @@ class Glm:
         mm_dict, lp_dict = self._build_model_mats(X, y, sample_weight, expect_y=True)
 
         # progress bar:
-        prog = self._init_pb()
+        prog = None
+        if verbose:
+            prog = self._init_pb()
 
         # 'closure' for torch.optimizer.Optimizer.step method:
         epoch = 0
@@ -136,9 +139,9 @@ class Glm:
                 self._fit_failed += 1
                 raise FitFailedException("`nan`/`inf` loss")
             loss.backward()
-
-            prog.update()
-            prog.set_description(f'Epoch: {epoch}; Loss: {loss:.4f}')
+            if prog:
+                prog.update()
+                prog.set_description(f'Epoch: {epoch}; Loss: {loss:.4f}')
             return loss
 
         # fit-loop:
@@ -147,7 +150,8 @@ class Glm:
         num_lower = 0
         for epoch in range(max_iter):
             try:
-                prog.reset()
+                if prog:
+                    prog.reset()
                 train_loss = self.optimizer_.step(closure).item()
                 for callback in callbacks:
                     callback(self, train_loss)
@@ -175,32 +179,17 @@ class Glm:
         log_probs = self.family.log_prob(self.family(**self._get_dist_kwargs(**mm_dict)), **lp_dict)
         penalty = self._get_penalty()
         if reduce:
-            log_probs = (log_probs * lp_dict['weight']).sum() + penalty
-            log_probs = log_probs / lp_dict['weight']
+            log_probs = (log_probs * lp_dict['weights']).sum() - penalty
+            log_probs = log_probs / lp_dict['weights']
         return log_probs
-
-    def _get_penalty(self) -> torch.Tensor:
-        raise NotImplementedError
 
     def _get_dist_kwargs(self, **kwargs) -> dict:
         """
         Call each entry in the module_ dict to get predicted family params.
         """
-        raise NotImplementedError
+        return {dp: self.module_[dp](kwargs[dp]) for dp in self.module_}
 
-    def _build_model_mats(self,
-                          X: ModelMatrix,
-                          y: Optional[ModelMatrix],
-                          sample_weight: Optional[np.ndarray],
-                          expect_y: bool = False) -> Tuple[dict, dict]:
-        """
-        :param X: A dataframe/ndarray/tensor, or dictionary of these.
-        :param y: An optional dataframe/ndarray/tensor, or dictionary of these.
-        :param sample_weight: Optional sample-weights
-        :param expect_y: If True, then will raise if y is not present.
-        :return: Two dictionaries: one of model-mat kwargs (for prediction) and one of target-related kwargs
-         (for evaluation i.e. log-prob).
-        """
+    def _get_xdict(self, X: ModelMatrix) -> Dict[str, torch.Tensor]:
         _to_kwargs = get_to_kwargs(self.module_)
 
         # convert to dict:
@@ -227,35 +216,29 @@ class Glm:
                 raise ValueError("Not all X entries have same shape[0]")
             if is_invalid(Xdict[nm]):
                 raise ValueError(f"nans/infs in X ({nm})")
+        return Xdict
 
-        if not expect_y:
-            return Xdict, {}
-
-        # handle target:
-        if y is None:
-            raise ValueError("Must pass `y` when fitting.")
+    def _get_ydict(self, y: ModelMatrix, sample_weight: Optional[np.ndarray]) -> Dict[str, torch.Tensor]:
+        if isinstance(y, dict):
+            assert 'value' in y
+            ydict = y.copy()
         else:
-            if isinstance(y, dict):
-                assert 'value' in y
-                ydict = y.copy()
-            else:
-                ydict = {'value': y}
+            ydict = {'value': y}
 
         y_len = ydict['value'].shape[0]
 
-        if x_len != y_len:
-            raise ValueError("Expected X.shape[0] to match y.shape[0]")
-
-        if 'weight' in ydict:
+        if 'weights' in ydict:
             if sample_weight is not None:
                 raise ValueError("Please pass either `sample_weight` or y=dict(weight=), but not both.")
         else:
-            ydict['weight'] = sample_weight
+            ydict['weights'] = sample_weight
 
-        if ydict.get('weight', None) is None:
-            ydict['weight'] = torch.ones(y_len)
+        if ydict.get('weights', None) is None:
+            ydict['weights'] = torch.ones(y_len)
         else:
-            assert (ydict['weight'] >= 0).all()
+            assert (ydict['weights'] >= 0).all()
+
+        _to_kwargs = get_to_kwargs(self.module_)
 
         for k in list(ydict):
             if not hasattr(ydict[k], '__iter__'):
@@ -268,11 +251,69 @@ class Glm:
                 raise ValueError(f"nans/infs in {k}")
             if ydict[k].shape[0] != y_len:
                 raise ValueError(f"{k}.shape[0] does not match y.shape[0]")
+        return ydict
+
+    def _build_model_mats(self,
+                          X: ModelMatrix,
+                          y: Optional[ModelMatrix],
+                          sample_weight: Optional[np.ndarray] = None,
+                          expect_y: bool = False) -> Tuple[dict, dict]:
+        """
+        :param X: A dataframe/ndarray/tensor, or dictionary of these.
+        :param y: An optional dataframe/ndarray/tensor, or dictionary of these.
+        :param sample_weight: Optional sample-weights
+        :param expect_y: If True, then will raise if y is not present.
+        :return: Two dictionaries: one of model-mat kwargs (for prediction) and one of target-related kwargs
+         (for evaluation i.e. log-prob).
+        """
+        _to_kwargs = get_to_kwargs(self.module_)
+
+        Xdict = self._get_xdict(X)
+
+        if not expect_y:
+            return Xdict, {}
+
+        if y is None:
+            raise ValueError("Must pass `y` when fitting.")
+
+        ydict = self._get_ydict(y=y, sample_weight=sample_weight)
+
+        if list(Xdict.values())[0].shape[0] != ydict['value'].shape[0]:
+            raise ValueError("Expected X.shape[0] to match y.shape[0]")
 
         return Xdict, ydict
 
     def _init_module(self, X: ModelMatrix, y: ModelMatrix) -> torch.nn.ModuleDict:
-        raise NotImplementedError
+
+        if not isinstance(X, dict):
+            X = {dp: X for dp in self.family.params}
+
+        if isinstance(y, dict):
+            y = y['value']
+        y = to_2d(y)
+
+        out = torch.nn.ModuleDict()
+        for dp in self.family.params:
+            Xp = X.get(dp, None)
+            out[dp] = self.module_factory(
+                input_dim=0 if Xp is None else Xp.shape[1],
+                output_dim=y.shape[1]
+            )
+        return out
+
+    def module_factory(self, input_dim: int, output_dim: int) -> torch.nn.Module:
+        if input_dim:
+            out = torch.nn.Linear(in_features=input_dim, out_features=output_dim, bias=True)
+            with torch.no_grad():
+                out.weight.normal_(std=.1)
+        else:
+            out = NoWeightModule(dim=output_dim)
+        return out
+
+    @staticmethod
+    def penalty_from_module(module: torch.nn.Module, penalty_multi: float) -> torch.Tensor:
+        feature_dist = torch.distributions.Normal(loc=0, scale=1 / penalty_multi ** .5, validate_args=False)
+        return -feature_dist.log_prob(module.weight).sum()
 
     def _init_optimizer(self) -> torch.optim.Optimizer:
         return torch.optim.LBFGS(
@@ -289,6 +330,55 @@ class Glm:
     def predict(self,
                 X: ModelMatrix,
                 type: str = 'mean',
-                avoid_broadcast_1d: bool = True,
+                kwargs_as_is: Union[bool, dict] = False,
                 **kwargs) -> np.ndarray:
-        raise NotImplementedError
+        """
+        Get the predicted distribution, then extract an attribute from that distribution and return as an ndarray.
+
+        :param X: An array or dictionary of arrays.
+        :param type: The type of the prediction -- i.e. the attribute to be extracted from the resulting
+         ``torch.Distribution``. The default is 'mean'. If that attribute is callable, will be called with ``kwargs``.
+        :param kwargs_as_is: If the ``type`` is callable, then kwargs that are lists/arrays will be converted to tensors, and
+         if 1D then will be unsqueezed to 2D (unsqueezing is to avoid accidental broadcasting, wherein (e.g.) a
+         distribution with batch_shape of N*1 receives a ``value`` w/shape (N,1), resulting in a (N,N) tensor, and
+         usually an OOM error). Can be ``True``, or can pass a dict to set true/false on per-kwarg basis.
+        :param kwargs: Keyword arguments to pass if ``type`` is callable. See ``kwargs_as_is``.
+        :return: A ndarray of predictions.
+        """
+        Xdict, *_ = self._build_model_mats(X=X, y=None)
+        dist_kwargs = self._get_dist_kwargs(**Xdict)
+        dist = self.family(**dist_kwargs)
+        result = getattr(dist, type)
+        if callable(result):
+            if not isinstance(kwargs_as_is, dict):
+                kwargs_as_is = {k: kwargs_as_is for k in kwargs}
+            for k in list(kwargs):
+                if not kwargs_as_is.get(k, False) and isinstance(kwargs[k], (torch.Tensor, np.ndarray, pd.Series)):
+                    kwargs[k] = to_2d(torch.as_tensor(np.asanyarray(kwargs[k]), **get_to_kwargs(self.module_)))
+            result = result(**kwargs)
+        elif kwargs:
+            warn(f"Ignoring {set(kwargs)}, `{dist.__class__.__name__}.{type}` not callable.")
+        return result.numpy()
+
+    def _get_penalty(self) -> torch.Tensor:
+        """
+        Get penalty on sum(log_prob) based on the module-weights and self.penalty.
+        """
+        if not self.penalty:
+            return torch.zeros(1, **get_to_kwargs(self.module_))
+
+        if isinstance(self.penalty, dict):
+            penalties = self.penalty
+            if set(self.penalty) != set(self.module_.keys()):
+                raise ValueError(
+                    f"``self.penalty.keys()`` is {set(self.penalty)}, but expected {set(self.module_.keys())}"
+                )
+        else:
+            penalties = {k: self.penalty for k in self.module_.keys()}
+
+        to_sum = [torch.tensor(0., **get_to_kwargs(self.module_))]
+        for dp, module in self.module_.items():
+            to_sum.append(
+                self.penalty_from_module(module, penalty_multi=penalties[dp])
+            )
+        return torch.stack(to_sum).sum()

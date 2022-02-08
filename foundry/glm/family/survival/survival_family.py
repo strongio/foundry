@@ -27,8 +27,7 @@ class SurvivalFamily(Family):
                  is_right_censored: Optional[torch.Tensor] = None,
                  is_left_censored: Optional[torch.Tensor] = None,
                  right_truncation: Optional[torch.Tensor] = None,
-                 left_truncation: Optional[torch.Tensor] = None,
-                 **kwargs) -> torch.Tensor:
+                 left_truncation: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         :param distribution: Torch family.
         :param value: Value for log-prob.
@@ -37,7 +36,6 @@ class SurvivalFamily(Family):
         :param is_left_censored: Optional bool tensor indicating whether the corresponding value is left-censored.
         :param right_truncation: Optional tensor indicating the value of right-truncation for each value.
         :param left_truncation: Optional tensor indicating the value of left-truncation for each value.
-        :param kwargs: TODO
         :return: The log-prob tensor.
         """
         value, weights = self._validate_values(value, weights, distribution)
