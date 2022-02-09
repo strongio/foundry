@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+from sklearn.exceptions import NotFittedError
 from torch.distributions.transforms import identity_transform
 
 from foundry.glm.family import Family
@@ -73,7 +74,7 @@ class TestBuildModelMats:
                 sample_weight=None,
                 expected_xdict={k: torch.stack([-torch.arange(5), torch.arange(5.)], 1)
                                 for k in _FakeDist.arg_constraints},
-                expected_ydict={'value': to_2d(torch.arange(5.)), 'weights': torch.ones(5, 1)}
+                expected_ydict={'value': to_2d(torch.arange(5.)), 'weight': torch.ones(5, 1)}
             ),
             Params(
                 description="Pass X as dict, get a dict; pass weights w/sample_weight",
@@ -82,7 +83,7 @@ class TestBuildModelMats:
                 y=np.arange(5.),
                 sample_weight=np.arange(5.),
                 expected_xdict={'param1': torch.stack([-torch.arange(5), torch.arange(5.)], 1)},
-                expected_ydict={'value': to_2d(torch.arange(5.)), 'weights': to_2d(torch.arange(5.))}
+                expected_ydict={'value': to_2d(torch.arange(5.)), 'weight': to_2d(torch.arange(5.))}
             ),
             Params(
                 description="Pass X as dict but wrong keys",
@@ -98,7 +99,7 @@ class TestBuildModelMats:
                 X=pd.DataFrame({'x1': np.arange(5), 'x2': -np.arange(5)}),
                 y={
                     'value': pd.DataFrame({'y': np.ones(5)}),
-                    'weights': np.arange(5.),
+                    'weight': np.arange(5.),
                     'something_else': np.zeros(5)
                 },
                 sample_weight=None,
@@ -106,7 +107,7 @@ class TestBuildModelMats:
                                 for k in ['param1', 'param2']},
                 expected_ydict={
                     'value': torch.ones(5, 1),
-                    'weights': to_2d(torch.arange(5.)),
+                    'weight': to_2d(torch.arange(5.)),
                     'something_else': torch.zeros(5, 1)
                 }
             ),
@@ -114,7 +115,7 @@ class TestBuildModelMats:
                 description="y as dict, redundant sample_weight",
                 mm_params=['param1', 'param2'],
                 X=pd.DataFrame({'x1': np.arange(5), 'x2': -np.arange(5)}),
-                y={'value': pd.DataFrame({'y': np.ones(5)}), 'weights': np.arange(5.)},
+                y={'value': pd.DataFrame({'y': np.ones(5)}), 'weight': np.arange(5.)},
                 sample_weight=np.arange(5.),
                 expected_exception=ValueError
             ),
@@ -177,7 +178,7 @@ class TestBuildModelMats:
                 sample_weight=None,
                 expected_xdict={k: torch.stack([torch.arange(5), -torch.arange(5.)], 1)
                                 for k in ['param1', 'param2']},
-                expected_ydict={'value': torch.ones((5, 2)), 'weights': torch.ones((5, 1))}
+                expected_ydict={'value': torch.ones((5, 2)), 'weight': torch.ones((5, 1))}
             ),
         ]
     )
@@ -234,7 +235,7 @@ class TestInit_module:
         glm = TestGlm(family=family)
         return glm
 
-    Params = namedtuple('Params', ['description', 'X', 'y', 'expected_result'])
+    Params = namedtuple('Params', ['description', 'X', 'y', 'expected_result', 'expected_exception'])
 
     @pytest.mark.parametrize(
         ids=lambda *p: p[0],
@@ -247,7 +248,8 @@ class TestInit_module:
                 expected_result=torch.nn.ModuleDict({
                     'param1': torch.nn.Linear(2, 1),
                     'param2': torch.nn.Linear(2, 1)
-                })
+                }),
+                expected_exception=None
             ),
             Params(
                 description="X is dict w/only one param; y is 2d",
@@ -256,7 +258,8 @@ class TestInit_module:
                 expected_result=torch.nn.ModuleDict({
                     'param1': torch.nn.Linear(2, 2),
                     'param2': NoWeightModule(2)
-                })
+                }),
+                expected_exception=None
             ),
             Params(
                 description="X is an empty dict",
@@ -265,7 +268,16 @@ class TestInit_module:
                 expected_result=torch.nn.ModuleDict({
                     'param1': NoWeightModule(),
                     'param2': NoWeightModule()
-                })
+                }),
+                expected_exception=None
+            ),
+            Params(
+                description="X has invalid params",
+                X={'param1': pd.DataFrame({'x1': [1, 2, 3], 'x2': [3, 2, 1]}),
+                   'parmesian': pd.DataFrame({'x1': [1, 2, 3], 'x2': [3, 2, 1]})},
+                y=np.ones(3),
+                expected_result=None,
+                expected_exception=ValueError
             )
         ]
     )
@@ -274,14 +286,26 @@ class TestInit_module:
                           X: ModelMatrix,
                           y: ModelMatrix,
                           expected_result: torch.nn.ModuleDict,
+                          expected_exception: Optional[Type[Exception]],
                           description: str):
         """
         Test that _init_module calls the `module_factory`, handling x and y shapes properly.
         """
-        result = glm._init_module(X=X, y=y)
-        result_sd_shapes = {k: v.shape for k, v in result.state_dict().items()}
-        expected_result_sd_shapes = {k: v.shape for k, v in expected_result.state_dict().items()}
-        assert result_sd_shapes == expected_result_sd_shapes
+        with pytest.raises(NotFittedError):
+            assert glm.expected_model_mat_params_
+
+        if expected_exception:
+            with pytest.raises(expected_exception):
+                glm._init_module(X=X, y=y)
+        else:
+            result = glm._init_module(X=X, y=y)
+            result_sd_shapes = {k: v.shape for k, v in result.state_dict().items()}
+            expected_result_sd_shapes = {k: v.shape for k, v in expected_result.state_dict().items()}
+            assert result_sd_shapes == expected_result_sd_shapes
+            if isinstance(X, dict):
+                assert glm.expected_model_mat_params_ == list(X.keys())
+            else:
+                assert glm.expected_model_mat_params_ == glm.family.params
 
 
 def test_predict():
@@ -308,4 +332,11 @@ def test_log_prob():
     Test that family.log_prob and _get_penalty are called, and that increasing the penalty decreases the log prob.
     """
     # TODO
+    pass
+
+
+def test_fit():
+    """
+    Integration test (e.g. make_model_mats succeeds b/c expected-params were populated
+    """
     pass

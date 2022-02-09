@@ -49,36 +49,37 @@ class Family:
         dist_kwargs.update(kwargs)
         return self.distribution_cls(**dist_kwargs)
 
-    @staticmethod
-    def _validate_values(value: torch.Tensor,
-                         weights: Optional[torch.Tensor],
+    @classmethod
+    def _validate_values(cls,
+                         value: torch.Tensor,
+                         weight: Optional[torch.Tensor],
                          distribution: distributions.Distribution) -> Tuple[torch.Tensor, torch.Tensor]:
         value = to_2d(value)
-        if weights is None:
-            weights = torch.ones_like(value)
+        if weight is None:
+            weight = torch.ones_like(value)
         else:
-            if (weights <= 0).any():
-                raise ValueError("Some weights <= 0")
-            weights = to_2d(weights)
-            if weights.shape[0] != value.shape[0]:
-                raise ValueError(f"weights.shape[0] is {weights.shape[0]} but value.shape[0] is {value.shape[0]}")
+            if (weight <= 0).any():
+                raise ValueError("Some weight <= 0")
+            weight = to_2d(weight)
+            if weight.shape[0] != value.shape[0]:
+                raise ValueError(f"weight.shape[0] is {weight.shape[0]} but value.shape[0] is {value.shape[0]}")
 
         if len(distribution.batch_shape) != 2:
             raise ValueError(f"family.batch_shape should be 2D, but it's {distribution.batch_shape}")
 
-        return value, weights
+        return value, weight
 
     def log_prob(self,
                  distribution: torch.distributions.Distribution,
                  value: torch.Tensor,
-                 weights: Optional[torch.Tensor] = None) -> torch.Tensor:
+                 weight: Optional[torch.Tensor] = None) -> torch.Tensor:
 
-        value, weights = self._validate_values(value, weights, distribution)
+        value, weight = self._validate_values(value, weight, distribution)
 
         # TODO: support discretized
 
         log_probs = distribution.log_prob(value)
-        log_probs = weights * log_probs
+        log_probs = weight * log_probs
         return log_probs
 
     @staticmethod
@@ -97,10 +98,10 @@ class Family:
             methods = list(reversed(methods))
         methods.append('cdf')
 
-        result = _maybe_method(distribution, method_nm=methods[0])
+        result = _maybe_method(distribution, method_nm=methods[0], value=value)
         if result is None:
             # doesn't implement what we want, maybe we can get 1 minus what_we_want then flip it?
-            result = _maybe_method(distribution, method_nm=methods[1])
+            result = _maybe_method(distribution, method_nm=methods[1], value=value)
             if result is not None:
                 # yes! just need to flip it
                 result = log1mexp(result)
@@ -110,9 +111,9 @@ class Family:
                     f"{type(distribution).__name__} does not implement `log_cdf` or `log_surv`, results may be unstable"
                 )
                 if lower_tail:
-                    result = distribution.cdf(value).log()
+                    result = distribution.cdf(value=value).log()
                 else:
-                    result = (1 - distribution.cdf(value)).log()
+                    result = (1 - distribution.cdf(value=value)).log()
 
         return result
 

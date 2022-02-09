@@ -6,6 +6,7 @@ from warnings import warn
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.base import BaseEstimator
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from tqdm import tqdm
@@ -22,11 +23,11 @@ N_FIT_RETRIES = int(os.getenv('GLM_N_FIT_RETRIES', 10))
 from sklearn.exceptions import NotFittedError
 
 
-class Glm:
+class Glm(BaseEstimator):
 
     def __init__(self,
                  family: Union[str, Family],
-                 penalty: Union[float, Sequence[float]] = 0.):
+                 penalty: Union[float, Sequence[float], Dict[str, float]] = 0.):
         self.family = family
         self.penalty = penalty
 
@@ -134,7 +135,7 @@ class Glm:
 
         def closure():
             self.optimizer_.zero_grad()
-            loss = -self.get_log_prob(mm_dict, lp_dict)
+            loss = -self.get_log_prob(mm_dict, lp_dict, reduce=True)
             if is_invalid(loss):
                 self._fit_failed += 1
                 raise FitFailedException("`nan`/`inf` loss")
@@ -179,8 +180,8 @@ class Glm:
         log_probs = self.family.log_prob(self.family(**self._get_dist_kwargs(**mm_dict)), **lp_dict)
         penalty = self._get_penalty()
         if reduce:
-            log_probs = (log_probs * lp_dict['weights']).sum() - penalty
-            log_probs = log_probs / lp_dict['weights']
+            log_probs = log_probs.sum() - penalty
+            log_probs = log_probs / lp_dict['weight'].sum()
         return log_probs
 
     def _get_dist_kwargs(self, **kwargs) -> dict:
@@ -227,16 +228,16 @@ class Glm:
 
         y_len = ydict['value'].shape[0]
 
-        if 'weights' in ydict:
+        if 'weight' in ydict:
             if sample_weight is not None:
                 raise ValueError("Please pass either `sample_weight` or y=dict(weight=), but not both.")
         else:
-            ydict['weights'] = sample_weight
+            ydict['weight'] = sample_weight
 
-        if ydict.get('weights', None) is None:
-            ydict['weights'] = torch.ones(y_len)
+        if ydict.get('weight', None) is None:
+            ydict['weight'] = torch.ones(y_len)
         else:
-            assert (ydict['weights'] >= 0).all()
+            assert (ydict['weight'] >= 0).all()
 
         _to_kwargs = get_to_kwargs(self.module_)
 
@@ -285,8 +286,12 @@ class Glm:
 
     def _init_module(self, X: ModelMatrix, y: ModelMatrix) -> torch.nn.ModuleDict:
 
-        if not isinstance(X, dict):
+        if isinstance(X, dict):
+            if not set(X.keys()).issubset(set(self.family.params)):
+                raise ValueError(f"X should be a subset of {self.family.params}")
+        else:
             X = {dp: X for dp in self.family.params}
+        self.expected_model_mat_params_ = list(X)
 
         if isinstance(y, dict):
             y = y['value']

@@ -135,6 +135,21 @@ class TestFamilyLogCdf:
             )
         assert result == expected_result
 
+        if implemented:
+            mock_distribution.cdf.assert_not_called()
+
+            if not lower_tail and 'log_surv' in implemented:
+                mock_distribution.log_cdf.assert_not_called()
+            else:
+                mock_distribution.log_cdf.assert_called_with(value='value')
+
+            if lower_tail and 'log_cdf' in implemented:
+                mock_distribution.log_surv.assert_not_called()
+            else:
+                mock_distribution.log_surv.assert_called_with(value='value')
+        else:
+            mock_distribution.cdf.assert_called_with(value='value')
+
 
 @pytest.mark.parametrize(
     argnames=["input", "expected_output", "expected_exception"],
