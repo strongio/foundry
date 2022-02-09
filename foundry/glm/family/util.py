@@ -1,7 +1,7 @@
+import inspect
 from typing import Union
 
 import torch
-
 from foundry.util import ArrayType
 
 
@@ -23,10 +23,28 @@ def subset_distribution(
         dist: torch.distributions.Distribution,
         item: Union[slice, ArrayType]
 ) -> torch.distributions.Distribution:
-    # approach taken in torch.distributions.Distribution.__repr__:
-    param_names = [k for k in dist.arg_constraints if k in dist.__dict__]
+    # safest:
+    if hasattr(dist, '__getitem__'):
+        return dist[item]
+
+    # check that default approach is OK by making sure it captures __init__ kwargs:
+    init_kwargs = set(
+        p.name
+        for p in inspect.signature(dist.__init__).parameters.values()
+        if p.name not in ("self", "validate_args")
+    )
+    non_param = init_kwargs - set(dist.arg_constraints)
+    if non_param:
+        raise TypeError(
+            f"Unable to subset {type(dist).__name__} using default approach, due to params in init that aren't in "
+            f"`arg_constraints`: {non_param}. Please report this error to the package maintainer."
+        )
+
+    # approach in torch.distributions.Distribution:
+    param_names = [k for k in list(dist.arg_constraints) if k in dist.__dict__]
     new_kwargs = {par: getattr(dist, par)[item] for par in param_names}
-    return type(dist)(**new_kwargs, validate_args=False)
+    new = type(dist)(**new_kwargs)
+    if '_validate_args' in dist.__dict__:
+        new._validate_args = dist._validate_args
 
-
-
+    return new

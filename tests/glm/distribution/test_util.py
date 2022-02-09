@@ -4,7 +4,7 @@ from typing import Optional, Type, Sequence
 import numpy as np
 import pytest
 import torch
-from torch.distributions import Binomial, Distribution
+from torch.distributions import Binomial, Distribution, Weibull, ContinuousBernoulli
 
 from foundry.glm.family.util import subset_distribution, log1mexp
 from tests.glm.distribution.util import assert_dist_equal
@@ -41,7 +41,14 @@ def test_log1mexp_stable(x: float):
     argvalues=[
         (Binomial, {'probs': torch.tensor([.5, .6])}, [1], {'probs': torch.tensor([.6])}, None),
         (Binomial, {'logits': torch.arange(5.)}, [1, 2], {'logits': torch.tensor([1., 2.])}, None),
-        (Binomial, {'probs': torch.tensor([.5, .6])}, [True, False, True], None, IndexError)
+        (Binomial, {'probs': torch.tensor([.5, .6])}, [True, False, True], None, IndexError),
+        (Weibull,
+         {'scale': torch.arange(1, 4.), 'concentration': torch.ones(3)},
+         [1, 2],
+         {'scale': torch.arange(2, 4.), 'concentration': torch.ones(2)},
+         None
+         ),
+        (ContinuousBernoulli, {'probs': torch.tensor([.5, .6])}, [1], None, TypeError)
     ]
 )
 def test_subset_distribution(cls: Type[Distribution],
