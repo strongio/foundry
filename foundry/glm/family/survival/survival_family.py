@@ -56,14 +56,14 @@ class SurvivalFamily(Family):
         if is_right_censored is not None:
             if right_censoring is not None:
                 raise ValueError("Cannot pass both `is_right_censored` and `right_censoring`")
-            is_right_censored = to_2d(to_1d(_as_bool(is_right_censored)))
+            is_right_censored = to_1d(_as_bool(is_right_censored))
             right_censoring = torch.full_like(value, fill_value=float('inf'))
             right_censoring[is_right_censored] = value[is_right_censored]
 
         if is_left_censored is not None:
             if left_censoring is not None:
                 raise ValueError("Cannot pass both `is_left_censored` and `left_censoring`")
-            is_left_censored = to_2d(to_1d(_as_bool(is_left_censored)))
+            is_left_censored = to_1d(_as_bool(is_left_censored))
             left_censoring = torch.full_like(value, fill_value=-float('inf'))
             left_censoring[is_left_censored] = value[is_left_censored]
 
@@ -109,21 +109,26 @@ class SurvivalFamily(Family):
                             right_truncation: Optional[torch.Tensor] = None,
                             left_truncation: Optional[torch.Tensor] = None,
                             ) -> torch.Tensor:
-        trunc_values = torch.zeros_like(log_probs)
+        assert len(log_probs.shape) == 2 and log_probs.shape[1] == 1
+
+        trunc_values = torch.zeros_like(log_probs).expand(-1, 2).clone()
 
         # left truncation:
         if left_truncation is not None:
-            raise NotImplementedError
+            left_truncation = to_2d(left_truncation)
+            assert left_truncation.shape == log_probs.shape
+            trunc_values[:, 0:1] = cls.log_cdf(distribution, value=left_truncation, lower_tail=False)
 
         # right truncation:
         if right_truncation is not None:
+            right_truncation = to_2d(right_truncation)
             assert right_truncation.shape == log_probs.shape
-            is_rtrunc = right_truncation > 0
-            trunc_values[is_rtrunc] = cls.log_cdf(
-                subset_distribution(distribution, is_rtrunc), value=right_truncation[is_rtrunc], lower_tail=False
-            )
+            trunc_values[:, 1:2] = cls.log_cdf(distribution, value=right_truncation, lower_tail=True)
 
-        return log_probs - trunc_values
+        if (_near_zero(trunc_values).sum(1) < 1).any():
+            raise ValueError("Some values are both left and right truncated.")
+
+        return log_probs - trunc_values.sum(1, keepdim=True)
 
     @classmethod
     def _get_censored_log_prob(cls,
@@ -138,7 +143,8 @@ class SurvivalFamily(Family):
 
         # left censoring
         if left_censoring is not None:
-            assert left_censoring.shape[0] == value.shape[0]
+            left_censoring = to_2d(left_censoring)
+            assert left_censoring.shape == value.shape
             is_left_censored = to_1d(~torch.isinf(left_censoring))
             is_uncens[is_left_censored] = False
             log_probs[is_left_censored, 0:1] = cls.log_cdf(
@@ -149,7 +155,8 @@ class SurvivalFamily(Family):
 
         # right censoring
         if right_censoring is not None:
-            assert right_censoring.shape[0] == value.shape[0]
+            right_censoring = to_2d(right_censoring)
+            assert right_censoring.shape == value.shape
             is_right_censored = to_1d(~torch.isinf(right_censoring))
             is_uncens[is_right_censored] = False
             log_probs[is_right_censored, 1:2] = cls.log_cdf(
@@ -164,6 +171,10 @@ class SurvivalFamily(Family):
         log_probs[is_uncens, 2:3] = subset_distribution(distribution, is_uncens).log_prob(value[is_uncens])
 
         return log_probs.sum(1, keepdim=True)
+
+
+def _near_zero(tens: torch.Tensor, **kwargs) -> torch.Tensor:
+    return torch.isclose(tens, torch.zeros_like(tens), **kwargs)
 
 
 def _as_bool(tens: torch.Tensor) -> torch.Tensor:
