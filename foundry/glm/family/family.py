@@ -18,6 +18,10 @@ class Family:
             distributions.Binomial,
             {'probs': transforms.SigmoidTransform()}  # TODO: support total_count?
         ),
+        'negative_binomial': (
+            distributions.NegativeBinomial,
+            {'probs': transforms.SigmoidTransform(), 'total_count': transforms.ExpTransform()}
+        ),
         'weibull': (
             torch.distributions.Weibull,
             {
@@ -69,6 +73,9 @@ class Family:
 
         if len(distribution.batch_shape) != 2:
             raise ValueError(f"distribution.batch_shape should be 2D, but it's {distribution.batch_shape}")
+
+        if distribution.batch_shape != value.shape:
+            raise ValueError(f"distribution.batch_shape is {distribution.batch_shape} but value.shape is {value.shape}")
 
         return value, weight
 
