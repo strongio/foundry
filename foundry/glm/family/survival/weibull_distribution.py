@@ -46,18 +46,11 @@ class CeilingWeibull(Weibull):
         return ceiling * super().cdf(value)
 
     def log_cdf(self, value: torch.Tensor) -> torch.Tensor:
-        # need to implement both cdf and surv because the usual log1mexp trick in Family.log_cdf doesn't work on
-        # improper distributions
-        log_cdf_no_ceiling = log1mexp(super().log_surv(value))
         _, ceiling = broadcast_all(value, self.ceiling)
-        return log_cdf_no_ceiling + ceiling.log()
+        return log1mexp(super().log_surv(value)) + ceiling.log()
 
     def log_surv(self, value: torch.Tensor) -> torch.Tensor:
-        # need to implement both cdf and surv because the usual log1mexp trick in Family.log_cdf doesn't work on
-        # improper distributions
-        log_surv_no_ceiling = super().log_surv(value)
-        _, ceiling = broadcast_all(value, self.ceiling)
-        return torch.log(torch.exp(log_surv_no_ceiling + ceiling.log()) + 1 - ceiling)
+        raise NotImplementedError
 
     def expand(self, batch_shape, _instance=None):
         raise NotImplementedError
