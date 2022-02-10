@@ -89,12 +89,12 @@ class TestSurvivalFamilyCensLogProb:
             is_left_censored=params.is_left_censored,
         )
         actual_cdf_lower_tail_inputs = [
-            call[1]['value'] for call in mock_log_cdf.call_args_list if call[1]['lower_tail']
+            kwargs['value'] for args, kwargs in mock_log_cdf.call_args_list if kwargs['lower_tail']
         ]
         actual_cdf_upper_tail_inputs = [
-            call[1]['value'] for call in mock_log_cdf.call_args_list if not call[1]['lower_tail']
+            kwargs['value'] for args, kwargs in mock_log_cdf.call_args_list if not kwargs['lower_tail']
         ]
-        actual_log_prob_inputs = [call[0][1] for call in mock_weibull_log_prob.call_args_list]
+        actual_log_prob_inputs = [args[1] for args, kwargs in mock_weibull_log_prob.call_args_list]
 
         return self.Fixture(
             expected_cdf_upper_tail_input=params.expected_input_cdf_upper_tail,
