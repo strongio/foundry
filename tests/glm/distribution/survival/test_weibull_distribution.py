@@ -4,6 +4,7 @@ import pytest
 import torch
 from torch.distributions import Weibull
 
+from foundry.glm.family import Family
 from foundry.glm.family.survival.weibull_distribution import weibull_log_surv, CeilingWeibull
 from tests.util import assert_scalars_equal
 
@@ -47,6 +48,7 @@ class TestCeilingWeibull:
         value: torch.Tensor
 
     @pytest.fixture(
+        ids=lambda p: f"ceiling={p.ceiling}, value={p.value})",
         params=[Params(scale=1., concentration=1., ceiling=1., value=1.),
                 Params(scale=1., concentration=1., ceiling=1., value=10.),
                 Params(scale=1., concentration=1., ceiling=.75, value=1.),
@@ -87,3 +89,12 @@ class TestCeilingWeibull:
         expected = setup.weibull.cdf(setup.value) * setup.ceiling_weibull.ceiling
         actual = setup.ceiling_weibull.log_cdf(setup.value).exp()
         assert_scalars_equal(expected, actual, tol=.001)
+
+    def test_log_surv(self, setup: Fixture):
+        log_surv = Family.log_cdf(setup.ceiling_weibull, value=setup.value, lower_tail=False)
+        # i.e. surv_no_ceiling * ceiling + (1-ceiling)
+        # i.e. surv_no_ceiling * .75 + .25 (asymptotes towards .25 surviving)
+        # i.e. surv_no_ceiling * 1.0 + 0. (ceiling = 1 has no effect)
+        expected_surv = \
+            (1 - setup.weibull.cdf(setup.value)) * setup.ceiling_weibull.ceiling + (1 - setup.ceiling_weibull.ceiling)
+        assert_scalars_equal(log_surv.exp(), expected_surv, tol=.01)
