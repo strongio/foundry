@@ -248,8 +248,7 @@ class Glm(BaseEstimator):
                     f"Unclear how to handle {k}, please report this error to the package maintainer"
                 )
             ydict[k] = to_2d(to_tensor(ydict[k], **_to_kwargs))
-            if is_invalid(ydict[k]):
-                raise ValueError(f"nans/infs in {k}")
+            # note: no `is_invalid` check, some families might support missing values or infs
             if ydict[k].shape[0] != y_len:
                 raise ValueError(f"{k}.shape[0] does not match y.shape[0]")
         return ydict

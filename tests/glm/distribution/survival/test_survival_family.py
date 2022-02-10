@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Optional, Sequence
 from unittest.mock import Mock, patch
 
@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from foundry.glm.family.survival import SurvivalFamily
+from foundry.util import to_2d
 from tests.util import assert_tensors_equal
 
 
@@ -14,8 +15,8 @@ class TestSurvivalFamilyCensLogProb:
     class Params:
         description: str
         value: torch.Tensor
-        is_right_censored: Optional[torch.Tensor]
-        is_left_censored: Optional[torch.Tensor]
+        right_censoring: Optional[torch.Tensor]
+        left_censoring: Optional[torch.Tensor]
         expected_input_cdf_upper_tail: Optional[torch.Tensor]
         expected_input_cdf_lower_tail: Optional[torch.Tensor]
         expected_input_log_prob: Optional[torch.Tensor]
@@ -34,39 +35,39 @@ class TestSurvivalFamilyCensLogProb:
         params=[
             Params(
                 description='Partial left and right censoring, exclusive',
-                value=torch.tensor([1., 2., 3.]),
-                is_right_censored=torch.tensor([False, False, True]),
-                is_left_censored=torch.tensor([False, True, False]),
-                expected_input_cdf_upper_tail=torch.tensor([3.]),
-                expected_input_cdf_lower_tail=torch.tensor([2.]),
-                expected_input_log_prob=torch.tensor([1.])
+                value=torch.tensor([4., 5., 6.]).unsqueeze(-1),
+                right_censoring=torch.tensor([float('inf'), float('inf'), 9.]).unsqueeze(-1),
+                left_censoring=torch.tensor([-float('inf'), 2., -float('inf')]).unsqueeze(-1),
+                expected_input_cdf_upper_tail=torch.tensor([[9.]]),
+                expected_input_cdf_lower_tail=torch.tensor([[2.]]),
+                expected_input_log_prob=torch.tensor([[4.]])
             ),
             Params(
                 description='Partial left and right censoring, overlapping',
-                value=torch.tensor([1., 2., 3.]),
-                is_right_censored=torch.tensor([False, True, True]),
-                is_left_censored=torch.tensor([False, True, False]),
-                expected_input_cdf_upper_tail=torch.tensor([2., 3.]),
-                expected_input_cdf_lower_tail=torch.tensor([2.]),
-                expected_input_log_prob=torch.tensor([1.])
+                value=torch.tensor([4., 5., 6.]).unsqueeze(-1),
+                right_censoring=torch.tensor([float('inf'), 8., 9.]).unsqueeze(-1),
+                left_censoring=torch.tensor([-float('inf'), 2., -float('inf')]).unsqueeze(-1),
+                expected_input_cdf_upper_tail=torch.tensor([8., 9.]).unsqueeze(-1),
+                expected_input_cdf_lower_tail=torch.tensor([2.]).unsqueeze(-1),
+                expected_input_log_prob=torch.tensor([4.]).unsqueeze(-1)
             ),
             Params(
                 description='Total left and right censoring, overlapping',
-                value=torch.tensor([1., 2., 3.]),
-                is_right_censored=torch.tensor([True, True, True]),
-                is_left_censored=torch.tensor([False, True, False]),
-                expected_input_cdf_upper_tail=torch.tensor([1., 2., 3.]),
-                expected_input_cdf_lower_tail=torch.tensor([2.]),
-                expected_input_log_prob=torch.tensor([])
+                value=torch.tensor([4., 5., 6.]).unsqueeze(-1),
+                right_censoring=torch.tensor([7., 8., 9.]).unsqueeze(-1),
+                left_censoring=torch.tensor([-float('inf'), 2., -float('inf')]).unsqueeze(-1),
+                expected_input_cdf_upper_tail=torch.tensor([7., 8., 9.]).unsqueeze(-1),
+                expected_input_cdf_lower_tail=torch.tensor([2.]).unsqueeze(-1),
+                expected_input_log_prob=torch.tensor([]).unsqueeze(-1)
             ),
             Params(
                 description='No censoring',
-                value=torch.tensor([1., 2., 3.]),
-                is_right_censored=torch.tensor([False, False, False]),
-                is_left_censored=None,
-                expected_input_cdf_upper_tail=torch.tensor([]),
+                value=torch.tensor([4., 5., 6.]).unsqueeze(-1),
+                right_censoring=torch.tensor([float('inf'), float('inf'), float('inf')]).unsqueeze(-1),
+                left_censoring=None,
+                expected_input_cdf_upper_tail=torch.tensor([]).unsqueeze(-1),
                 expected_input_cdf_lower_tail=None,
-                expected_input_log_prob=torch.tensor([1., 2., 3.])
+                expected_input_log_prob=torch.tensor([4., 5., 6.]).unsqueeze(-1)
             ),
         ]
     )
@@ -74,6 +75,7 @@ class TestSurvivalFamilyCensLogProb:
     @patch('torch.distributions.Weibull.log_prob', autospec=True)
     def setup(self, mock_weibull_log_prob: Mock, mock_log_cdf: Mock, request) -> Fixture:
         params: TestSurvivalFamilyCensLogProb.Params = request.param
+
         family = SurvivalFamily.from_name('weibull')
         torch_dist = family(
             scale=torch.zeros_like(params.value),
@@ -85,8 +87,8 @@ class TestSurvivalFamilyCensLogProb:
         family._get_censored_log_prob(
             distribution=torch_dist,
             value=params.value,
-            is_right_censored=params.is_right_censored,
-            is_left_censored=params.is_left_censored,
+            right_censoring=params.right_censoring,
+            left_censoring=params.left_censoring,
         )
         actual_cdf_lower_tail_inputs = [
             call[1]['value'] for call in mock_log_cdf.call_args_list if call[1]['lower_tail']

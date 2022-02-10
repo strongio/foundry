@@ -6,7 +6,7 @@ from torch import distributions
 from torch.distributions import transforms
 
 from .util import log1mexp
-from foundry.util import to_2d
+from foundry.util import to_2d, is_invalid
 
 
 class Family:
@@ -55,6 +55,9 @@ class Family:
                          weight: Optional[torch.Tensor],
                          distribution: distributions.Distribution) -> Tuple[torch.Tensor, torch.Tensor]:
         value = to_2d(value)
+
+        cls._raise_invalid_values(value)
+
         if weight is None:
             weight = torch.ones_like(value)
         else:
@@ -65,9 +68,14 @@ class Family:
                 raise ValueError(f"weight.shape[0] is {weight.shape[0]} but value.shape[0] is {value.shape[0]}")
 
         if len(distribution.batch_shape) != 2:
-            raise ValueError(f"family.batch_shape should be 2D, but it's {distribution.batch_shape}")
+            raise ValueError(f"distribution.batch_shape should be 2D, but it's {distribution.batch_shape}")
 
         return value, weight
+
+    @staticmethod
+    def _raise_invalid_values(value: torch.Tensor):
+        if is_invalid(value):
+            raise ValueError("nans/infs in `value`")
 
     def log_prob(self,
                  distribution: torch.distributions.Distribution,

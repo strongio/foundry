@@ -4,7 +4,7 @@ import torch
 from torch import distributions
 from torch.distributions import transforms
 
-from foundry.util import to_1d
+from foundry.util import to_1d, is_invalid, to_2d
 from .weibull_distribution import CeilingWeibull
 from ..family import Family
 from ..util import subset_distribution
@@ -25,7 +25,9 @@ class SurvivalFamily(Family):
                  distribution: distributions.Distribution,
                  value: torch.Tensor,
                  weight: Optional[torch.Tensor] = None,
+                 right_censoring: Optional[torch.Tensor] = None,
                  is_right_censored: Optional[torch.Tensor] = None,
+                 left_censoring: Optional[torch.Tensor] = None,
                  is_left_censored: Optional[torch.Tensor] = None,
                  right_truncation: Optional[torch.Tensor] = None,
                  left_truncation: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -34,18 +36,42 @@ class SurvivalFamily(Family):
         :param value: Value for log-prob.
         :param weight: Optional weights, same shape as value.
         :param is_right_censored: Optional bool tensor indicating whether the corresponding value is right-censored.
+        :param right_censoring: Optional tensor indicating the value of right-censoring. Alternative to
+         ``is_right_censored``, which cannot be used when an entry is both right and left censored.
         :param is_left_censored: Optional bool tensor indicating whether the corresponding value is left-censored.
+        :param left_censoring: Optional tensor indicating the value of left-censoring. Alternative to
+         ``is_left_censored``, which cannot be used when an entry is both right and left censored.
         :param right_truncation: Optional tensor indicating the value of right-truncation for each value.
         :param left_truncation: Optional tensor indicating the value of left-truncation for each value.
         :return: The log-prob tensor.
         """
         value, weight = self._validate_values(value, weight, distribution)
 
+        if (is_right_censored is not None) and (is_left_censored is not None):
+            raise ValueError(
+                "Cannot pass both `is_right_censored` and `is_left_censored`, use `right_censoring` and "
+                "`left_censoring` kwargs instead."
+            )
+
+        if is_right_censored is not None:
+            if right_censoring is not None:
+                raise ValueError("Cannot pass both `is_right_censored` and `right_censoring`")
+            is_right_censored = to_2d(to_1d(_as_bool(is_right_censored)))
+            right_censoring = torch.full_like(value, fill_value=float('inf'))
+            right_censoring[is_right_censored] = value[is_right_censored]
+
+        if is_left_censored is not None:
+            if left_censoring is not None:
+                raise ValueError("Cannot pass both `is_left_censored` and `left_censoring`")
+            is_left_censored = to_2d(to_1d(_as_bool(is_left_censored)))
+            left_censoring = torch.full_like(value, fill_value=-float('inf'))
+            left_censoring[is_left_censored] = value[is_left_censored]
+
         log_probs = self._get_censored_log_prob(
             distribution=distribution,
             value=value,
-            is_right_censored=is_right_censored,
-            is_left_censored=is_left_censored
+            left_censoring=left_censoring,
+            right_censoring=right_censoring
         )
 
         log_probs = self._truncate_log_probs(
@@ -56,6 +82,11 @@ class SurvivalFamily(Family):
         )
 
         return log_probs * weight
+
+    @staticmethod
+    def _raise_invalid_values(value: torch.Tensor):
+        # invalid values permitted for censored observations
+        pass
 
     @classmethod
     def _validate_values(cls,
@@ -98,34 +129,41 @@ class SurvivalFamily(Family):
     def _get_censored_log_prob(cls,
                                distribution: distributions.Distribution,
                                value: torch.Tensor,
-                               is_right_censored: Optional[torch.Tensor] = None,
-                               is_left_censored: Optional[torch.Tensor] = None) -> torch.Tensor:
-        #
-        log_probs = torch.zeros_like(value)
+                               right_censoring: Optional[torch.Tensor] = None,
+                               left_censoring: Optional[torch.Tensor] = None) -> torch.Tensor:
+        assert len(value.shape) == 2 and value.shape[1] == 1  # currently only 1d supported
+
+        log_probs = torch.zeros_like(value).expand(-1, 3).clone()
         is_uncens = torch.ones(value.shape[0], dtype=torch.bool)
 
         # left censoring
-        if is_left_censored is not None:
-            assert is_left_censored.shape[0] == value.shape[0]
-            is_left_censored = to_1d(_as_bool(is_left_censored))
+        if left_censoring is not None:
+            assert left_censoring.shape[0] == value.shape[0]
+            is_left_censored = to_1d(~torch.isinf(left_censoring))
             is_uncens[is_left_censored] = False
-            log_probs[is_left_censored] = cls.log_cdf(
-                subset_distribution(distribution, is_left_censored), value=value[is_left_censored], lower_tail=True
+            log_probs[is_left_censored, 0:1] = cls.log_cdf(
+                subset_distribution(distribution, is_left_censored),
+                value=left_censoring[is_left_censored],
+                lower_tail=True
             )
 
         # right censoring
-        if is_right_censored is not None:
-            assert is_right_censored.shape[0] == value.shape[0]
-            is_right_censored = to_1d(_as_bool(is_right_censored))
+        if right_censoring is not None:
+            assert right_censoring.shape[0] == value.shape[0]
+            is_right_censored = to_1d(~torch.isinf(right_censoring))
             is_uncens[is_right_censored] = False
-            log_probs[is_right_censored] = cls.log_cdf(
-                subset_distribution(distribution, is_right_censored), value=value[is_right_censored], lower_tail=False
+            log_probs[is_right_censored, 1:2] = cls.log_cdf(
+                subset_distribution(distribution, is_right_censored),
+                value=right_censoring[is_right_censored],
+                lower_tail=False
             )
 
         # no censoring:
-        log_probs[is_uncens] = subset_distribution(distribution, is_uncens).log_prob(value[is_uncens])
+        if is_invalid(value[is_uncens]):
+            raise ValueError("Some uncensored entries in `value` are nan/inf")
+        log_probs[is_uncens, 2:3] = subset_distribution(distribution, is_uncens).log_prob(value[is_uncens])
 
-        return log_probs
+        return log_probs.sum(1, keepdim=True)
 
 
 def _as_bool(tens: torch.Tensor) -> torch.Tensor:
