@@ -7,7 +7,7 @@ from torch.distributions import transforms
 from foundry.util import to_1d, is_invalid, to_2d
 from .weibull_distribution import CeilingWeibull
 from ..family import Family
-from ..util import subset_distribution
+from ..util import subset_distribution, log1mexp
 
 
 class SurvivalFamily(Family):
@@ -59,6 +59,8 @@ class SurvivalFamily(Family):
             is_right_censored = to_1d(_as_bool(is_right_censored))
             right_censoring = torch.full_like(value, fill_value=float('inf'))
             right_censoring[is_right_censored] = value[is_right_censored]
+        if right_censoring is None:
+            right_censoring = torch.full_like(value, fill_value=float('inf'))
 
         if is_left_censored is not None:
             if left_censoring is not None:
@@ -66,6 +68,8 @@ class SurvivalFamily(Family):
             is_left_censored = to_1d(_as_bool(is_left_censored))
             left_censoring = torch.full_like(value, fill_value=-float('inf'))
             left_censoring[is_left_censored] = value[is_left_censored]
+        if left_censoring is None:
+            left_censoring = torch.full_like(value, fill_value=-float('inf'))
 
         log_probs = self._get_censored_log_prob(
             distribution=distribution,
@@ -134,43 +138,62 @@ class SurvivalFamily(Family):
     def _get_censored_log_prob(cls,
                                distribution: distributions.Distribution,
                                value: torch.Tensor,
-                               right_censoring: Optional[torch.Tensor] = None,
-                               left_censoring: Optional[torch.Tensor] = None) -> torch.Tensor:
+                               right_censoring: torch.Tensor,
+                               left_censoring: torch.Tensor) -> torch.Tensor:
         assert len(value.shape) == 2 and value.shape[1] == 1  # currently only 1d supported
 
-        log_probs = torch.zeros_like(value).expand(-1, 3).clone()
-        is_uncens = torch.ones(value.shape[0], dtype=torch.bool)
+        is_right_censored = to_1d(~torch.isinf(right_censoring))
+        is_left_censored = to_1d(~torch.isinf(left_censoring))
+        is_interval_censored = to_1d(left_censoring > right_censoring)
+        is_doubly_censored = is_left_censored & is_right_censored & ~is_interval_censored
+        is_uncens = ~(is_right_censored | is_left_censored)
+        log_probs = torch.zeros_like(value)
 
-        # left censoring
-        if left_censoring is not None:
-            left_censoring = to_2d(left_censoring)
-            assert left_censoring.shape == value.shape
-            is_left_censored = to_1d(~torch.isinf(left_censoring))
-            is_uncens[is_left_censored] = False
-            log_probs[is_left_censored, 0:1] = cls.log_cdf(
-                subset_distribution(distribution, is_left_censored),
-                value=left_censoring[is_left_censored],
-                lower_tail=True
-            )
+        # only right censored:
+        log_probs[is_right_censored & ~is_left_censored] = cls.log_cdf(
+            subset_distribution(distribution, is_right_censored & ~is_left_censored),
+            value=right_censoring[is_right_censored & ~is_left_censored],
+            lower_tail=False
+        )
 
-        # right censoring
-        if right_censoring is not None:
-            right_censoring = to_2d(right_censoring)
-            assert right_censoring.shape == value.shape
-            is_right_censored = to_1d(~torch.isinf(right_censoring))
-            is_uncens[is_right_censored] = False
-            log_probs[is_right_censored, 1:2] = cls.log_cdf(
-                subset_distribution(distribution, is_right_censored),
-                value=right_censoring[is_right_censored],
-                lower_tail=False
-            )
+        # only left censored:
+        log_probs[is_left_censored & ~is_right_censored] = cls.log_cdf(
+            subset_distribution(distribution, is_left_censored & ~is_right_censored),
+            value=left_censoring[is_left_censored & ~is_right_censored],
+            lower_tail=True
+        )
+
+        # interval censored:
+        log_probs[is_interval_censored] = cls.interval_log_prob(
+            subset_distribution(distribution, is_interval_censored),
+            lower=left_censoring[is_interval_censored],
+            upper=right_censoring[is_interval_censored]
+        )
+
+        # double censored:
+        log_probs[is_doubly_censored] = log1mexp(cls.interval_log_prob(
+            subset_distribution(distribution, is_doubly_censored),
+            lower=left_censoring[is_doubly_censored],
+            upper=right_censoring[is_doubly_censored]
+        ))
 
         # no censoring:
         if is_invalid(value[is_uncens]):
             raise ValueError("Some uncensored entries in `value` are nan/inf")
-        log_probs[is_uncens, 2:3] = subset_distribution(distribution, is_uncens).log_prob(value[is_uncens])
+        log_probs[is_uncens] = subset_distribution(distribution, is_uncens).log_prob(value[is_uncens])
 
-        return log_probs.sum(1, keepdim=True)
+        return log_probs
+
+    @classmethod
+    def interval_log_prob(cls,
+                          distribution: distributions.Distribution,
+                          lower: torch.Tensor,
+                          upper: torch.Tensor) -> torch.Tensor:
+        lower_log_cdf = cls.log_cdf(distribution, value=lower, lower_tail=True)
+        upper_log_cdf = cls.log_cdf(distribution, value=upper, lower_tail=True)
+
+        # more stable version of upper_log_cdf.exp() - lower_log_cdf.exp()
+        return upper_log_cdf + (1 - (lower_log_cdf - upper_log_cdf).exp()).log()
 
 
 def _near_zero(tens: torch.Tensor, **kwargs) -> torch.Tensor:
