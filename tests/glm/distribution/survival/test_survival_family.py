@@ -47,8 +47,8 @@ class TestSurvivalFamilyCensLogProb:
                 expected_input_cdf_upper_tail=torch.tensor([[300.]]),
                 expected_input_cdf_lower_tail=torch.tensor([[2.]]),
                 expected_input_interval_log_prob={
-                    'lower': torch.tensor([]).unsqueeze(-1),
-                    'upper': torch.tensor([]).unsqueeze(-1)
+                    'below': torch.tensor([]).unsqueeze(-1),
+                    'above': torch.tensor([]).unsqueeze(-1)
                 },
                 expected_input_log_prob=torch.tensor([[10.]]),
                 expected_output_log_prob=torch.tensor([10., 2., 300.]).unsqueeze(-1)
@@ -61,11 +61,11 @@ class TestSurvivalFamilyCensLogProb:
                 expected_input_cdf_upper_tail=torch.tensor([300.]).unsqueeze(-1),
                 expected_input_cdf_lower_tail=torch.tensor([]).unsqueeze(-1),
                 expected_input_interval_log_prob={
-                    'lower': torch.tensor([2.]).unsqueeze(-1),
-                    'upper': torch.tensor([200.]).unsqueeze(-1)
+                    'below': torch.tensor([2.]).unsqueeze(-1),
+                    'above': torch.tensor([200.]).unsqueeze(-1)
                 },
                 expected_input_log_prob=torch.tensor([10.]).unsqueeze(-1),
-                expected_output_log_prob=torch.tensor([10., -202., 300.]).unsqueeze(-1)
+                expected_output_log_prob=torch.tensor([10., 202., 300.]).unsqueeze(-1)
             ),
             Params(
                 description='No censoring',
@@ -75,23 +75,21 @@ class TestSurvivalFamilyCensLogProb:
                 expected_input_cdf_upper_tail=torch.tensor([]).unsqueeze(-1),
                 expected_input_cdf_lower_tail=torch.tensor([]).unsqueeze(-1),
                 expected_input_interval_log_prob={
-                    'lower': torch.tensor([]).unsqueeze(-1),
-                    'upper': torch.tensor([]).unsqueeze(-1)
+                    'below': torch.tensor([]).unsqueeze(-1),
+                    'above': torch.tensor([]).unsqueeze(-1)
                 },
                 expected_input_log_prob=torch.tensor([10., 11., 12.]).unsqueeze(-1),
                 expected_output_log_prob=torch.tensor([10., 11., 12.]).unsqueeze(-1)
             ),
         ]
     )
-    @patch('foundry.glm.family.survival.survival_family.log1mexp', autospec=True)
-    @patch('foundry.glm.family.survival.SurvivalFamily.interval_log_prob', autospec=True)
+    @patch('foundry.glm.family.survival.SurvivalFamily._interval_log_prob', autospec=True)
     @patch('foundry.glm.family.Family.log_cdf', autospec=True)
     @patch('torch.distributions.Weibull.log_prob', autospec=True)
     def setup(self,
               mock_weibull_log_prob: Mock,
               mock_log_cdf: Mock,
               mock_interval_log_prob: Mock,
-              mock_log1mexp: Mock,
               request) -> Fixture:
         params: TestSurvivalFamilyCensLogProb.Params = request.param
 
@@ -103,8 +101,7 @@ class TestSurvivalFamilyCensLogProb:
 
         mock_weibull_log_prob.side_effect = lambda self, value: value
         mock_log_cdf.side_effect = lambda distribution, value, lower_tail: value
-        mock_interval_log_prob.side_effect = lambda distribution, lower, upper: lower + upper
-        mock_log1mexp.side_effect = lambda x: -x
+        mock_interval_log_prob.side_effect = lambda distribution, below, above: below + above
 
         actual_log_prob = family._get_censored_log_prob(
             distribution=torch_dist,
@@ -136,24 +133,17 @@ class TestSurvivalFamilyCensLogProb:
             expected_output_log_prob=params.expected_output_log_prob,
         )
 
-    def test_interval_log_prob(self, setup: Fixture):
+    def test_interval_log_prob_input(self, setup: Fixture):
         """
         Test that interval_log_prob is called for doubly censored inputs
         """
-        assert len(setup.actual_interval_log_prob_inputs) == 2
-        # no tests currently use left > right
-        # todo: don't hardcode this
+        assert len(setup.actual_interval_log_prob_inputs) == 1
         assert_dict_of_tensors_equal(
             setup.actual_interval_log_prob_inputs[0],
-            {'lower': torch.tensor([]).unsqueeze(-1), 'upper': torch.tensor([]).unsqueeze(-1)}
-        )
-        # 2nd call is double censoring
-        assert_dict_of_tensors_equal(
-            setup.actual_interval_log_prob_inputs[1],
             setup.expected_interval_log_prob_input
         )
 
-    def test_left_cens(self, setup: Fixture):
+    def test_left_cens_input(self, setup: Fixture):
         """
         Test that log_cdf is called with lower_tail=True for all/only left-censored inputs.
         """
@@ -161,7 +151,7 @@ class TestSurvivalFamilyCensLogProb:
             "log_cdf called with lower_tail=True more than once"
         assert_tensors_equal(setup.actual_cdf_lower_tail_inputs[0], setup.expected_cdf_lower_tail_input)
 
-    def test_right_cens(self, setup: Fixture):
+    def test_right_cens_input(self, setup: Fixture):
         """
         Test that log_cdf is called with lower_tail=False for all/only right-censored inputs.
         """
@@ -169,14 +159,15 @@ class TestSurvivalFamilyCensLogProb:
             "log_cdf called w/lower_tail=False more than once"
         assert_tensors_equal(setup.actual_cdf_upper_tail_inputs[0], setup.expected_cdf_upper_tail_input)
 
-    def test_uncens(self, setup: Fixture):
+    def test_uncens_input(self, setup: Fixture):
         """
         Test that log_prob is called for all/only uncensored inputs.
         """
         assert len(setup.actual_log_prob_inputs) == 1, "log_prob called more than once"
         assert_tensors_equal(setup.actual_log_prob_inputs[0], setup.expected_log_prob_input)
 
-    def test_output(self, setup: Fixture):
+    def test_lp_output(self, setup: Fixture):
         assert_tensors_equal(setup.expected_output_log_prob, setup.actual_output_log_prob)
 
-# todo: trunc
+# todo: _interval_log_prob
+# todo: _truncate_log_probs

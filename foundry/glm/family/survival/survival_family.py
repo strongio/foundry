@@ -144,8 +144,7 @@ class SurvivalFamily(Family):
 
         is_right_censored = to_1d(~torch.isinf(right_censoring))
         is_left_censored = to_1d(~torch.isinf(left_censoring))
-        is_interval_censored = to_1d(left_censoring > right_censoring)
-        is_doubly_censored = is_left_censored & is_right_censored & ~is_interval_censored
+        is_doubly_censored = is_left_censored & is_right_censored
         is_uncens = ~(is_right_censored | is_left_censored)
         log_probs = torch.zeros_like(value)
 
@@ -163,19 +162,12 @@ class SurvivalFamily(Family):
             lower_tail=True
         )
 
-        # interval censored:
-        log_probs[is_interval_censored] = cls.interval_log_prob(
-            subset_distribution(distribution, is_interval_censored),
-            lower=left_censoring[is_interval_censored],
-            upper=right_censoring[is_interval_censored]
-        )
-
-        # double censored:
-        log_probs[is_doubly_censored] = log1mexp(cls.interval_log_prob(
+        # interval/double censored:
+        log_probs[is_doubly_censored] = cls._interval_log_prob(
             subset_distribution(distribution, is_doubly_censored),
-            lower=left_censoring[is_doubly_censored],
-            upper=right_censoring[is_doubly_censored]
-        ))
+            below=left_censoring[is_doubly_censored],
+            above=right_censoring[is_doubly_censored]
+        )
 
         # no censoring:
         if is_invalid(value[is_uncens]):
@@ -185,15 +177,28 @@ class SurvivalFamily(Family):
         return log_probs
 
     @classmethod
-    def interval_log_prob(cls,
-                          distribution: distributions.Distribution,
-                          lower: torch.Tensor,
-                          upper: torch.Tensor) -> torch.Tensor:
-        lower_log_cdf = cls.log_cdf(distribution, value=lower, lower_tail=True)
-        upper_log_cdf = cls.log_cdf(distribution, value=upper, lower_tail=True)
+    def _interval_log_prob(cls,
+                           distribution: distributions.Distribution,
+                           below: torch.Tensor,
+                           above: torch.Tensor) -> torch.Tensor:
+        log_cdf1 = cls.log_cdf(distribution, value=below, lower_tail=True)
+        log_cdf2 = cls.log_cdf(distribution, value=above, lower_tail=True)
 
-        # more stable version of upper_log_cdf.exp() - lower_log_cdf.exp()
-        return upper_log_cdf + (1 - (lower_log_cdf - upper_log_cdf).exp()).log()
+        out = torch.zeros_like(below)
+        # below > above means interval censoring:
+        is_interval = below > above
+        # more stable version of log_cdf1.exp() - log_cdf2.exp()
+        out[is_interval] = log_cdf1[is_interval] + (1 - (log_cdf2[is_interval] - log_cdf1[is_interval]).exp()).log()
+
+        # above > below means double censored (x is > above *or* x is < below)
+        # more stable version of 1 - (log_cdf2.exp() - log_cdf1.exp())
+        # exp(0) + log_cdf1.exp() - log_cdf2.exp()
+
+        # out[~is_interval] = (log_cdf1[~is_interval].exp() - log_cdf2[~is_interval].exp()).log()
+        out[~is_interval] = log1mexp(
+            log_cdf2[~is_interval] + (1 - (log_cdf1[~is_interval] - log_cdf2[~is_interval]).exp()).log()
+        )
+        return out
 
 
 def _near_zero(tens: torch.Tensor, **kwargs) -> torch.Tensor:
