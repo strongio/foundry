@@ -42,6 +42,9 @@ class Family:
         self.distribution_cls = distribution_cls
         self.params_and_links = params_and_links
 
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.distribution_cls.__name__})"
+
     @property
     def params(self) -> Sequence[str]:
         return list(self.params_and_links)

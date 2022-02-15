@@ -141,6 +141,8 @@ class SurvivalFamily(Family):
                                right_censoring: torch.Tensor,
                                left_censoring: torch.Tensor) -> torch.Tensor:
         assert len(value.shape) == 2 and value.shape[1] == 1  # currently only 1d supported
+        right_censoring = right_censoring.view(*value.shape)
+        left_censoring = left_censoring.view(*value.shape)
 
         is_right_censored = to_1d(~torch.isinf(right_censoring))
         is_left_censored = to_1d(~torch.isinf(left_censoring))

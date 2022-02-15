@@ -9,7 +9,7 @@ import torch
 from sklearn.base import BaseEstimator
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from foundry.glm.family import Family
 from foundry.glm.family.survival import SurvivalFamily
