@@ -144,6 +144,7 @@ class SurvivalFamily(Family):
         right_censoring = right_censoring.view(*value.shape)
         left_censoring = left_censoring.view(*value.shape)
 
+        # TODO: add to is_*_censored mask if log_cdf is -inf or 0
         is_right_censored = to_1d(~torch.isinf(right_censoring))
         is_left_censored = to_1d(~torch.isinf(left_censoring))
         is_doubly_censored = is_left_censored & is_right_censored
@@ -187,19 +188,20 @@ class SurvivalFamily(Family):
         log_cdf2 = cls.log_cdf(distribution, value=above, lower_tail=True)
 
         out = torch.zeros_like(below)
+
+        # need to avoid evaluating for is_too_close because:
+        # - interval cens prob vanishes, so log_prob is -inf (todo: out=0 isn't right -- better to throw exception?)
+        # - double censored prob approaches 1, but got there via -inf interval_cens, so gradient is nan
+        is_too_close = torch.isclose(log_cdf2, log_cdf1)
+
         # below > above means interval censoring:
-        is_interval = below > above
+        is_interval = (below > above) & ~is_too_close
         # more stable version of log_cdf1.exp() - log_cdf2.exp()
         out[is_interval] = log_cdf1[is_interval] + (1 - (log_cdf2[is_interval] - log_cdf1[is_interval]).exp()).log()
 
         # above > below means double censored (x is > above *or* x is < below)
-        # more stable version of 1 - (log_cdf2.exp() - log_cdf1.exp())
-        # exp(0) + log_cdf1.exp() - log_cdf2.exp()
-
-        # out[~is_interval] = (log_cdf1[~is_interval].exp() - log_cdf2[~is_interval].exp()).log()
-        out[~is_interval] = log1mexp(
-            log_cdf2[~is_interval] + (1 - (log_cdf1[~is_interval] - log_cdf2[~is_interval]).exp()).log()
-        )
+        is_double = (below < above) & ~is_too_close
+        out[is_double] = log1mexp(log_cdf2[is_double] + (1 - (log_cdf1[is_double] - log_cdf2[is_double]).exp()).log())
         return out
 
 
