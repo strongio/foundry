@@ -47,6 +47,36 @@ class SurvivalFamily(Family):
         """
         value, weight = self._validate_values(value, weight, distribution)
 
+        left_censoring, right_censoring = self._validate_censoring(
+            value=value,
+            right_censoring=right_censoring,
+            is_right_censored=is_right_censored,
+            left_censoring=left_censoring,
+            is_left_censored=is_left_censored
+        )
+
+        log_probs = self._get_censored_log_prob(
+            distribution=distribution,
+            value=value,
+            left_censoring=left_censoring,
+            right_censoring=right_censoring
+        )
+
+        log_probs = self._truncate_log_probs(
+            log_probs=log_probs,
+            distribution=distribution,
+            right_truncation=right_truncation,
+            left_truncation=left_truncation
+        )
+
+        return log_probs * weight
+
+    @staticmethod
+    def _validate_censoring(value: torch.Tensor,
+                            right_censoring: Optional[torch.Tensor] = None,
+                            is_right_censored: Optional[torch.Tensor] = None,
+                            left_censoring: Optional[torch.Tensor] = None,
+                            is_left_censored: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         if (is_right_censored is not None) and (is_left_censored is not None):
             raise ValueError(
                 "Cannot pass both `is_right_censored` and `is_left_censored`, use `right_censoring` and "
@@ -71,21 +101,7 @@ class SurvivalFamily(Family):
         if left_censoring is None:
             left_censoring = torch.full_like(value, fill_value=-float('inf'))
 
-        log_probs = self._get_censored_log_prob(
-            distribution=distribution,
-            value=value,
-            left_censoring=left_censoring,
-            right_censoring=right_censoring
-        )
-
-        log_probs = self._truncate_log_probs(
-            log_probs=log_probs,
-            distribution=distribution,
-            right_truncation=right_truncation,
-            left_truncation=left_truncation
-        )
-
-        return log_probs * weight
+        return left_censoring, right_censoring
 
     @staticmethod
     def _raise_invalid_values(value: torch.Tensor):
@@ -130,7 +146,8 @@ class SurvivalFamily(Family):
             trunc_values[:, 1:2] = cls.log_cdf(distribution, value=right_truncation, lower_tail=True)
 
         if (_near_zero(trunc_values).sum(1) < 1).any():
-            raise ValueError("Some values are both left and right truncated.")
+            # TODO: this can be supported. pdf(x) / [cdf(upper)-cdf(lower)]
+            raise NotImplementedError("Simultaneous left and right truncation not yet supported.")
 
         return log_probs - trunc_values.sum(1, keepdim=True)
 

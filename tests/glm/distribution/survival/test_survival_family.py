@@ -10,6 +10,34 @@ from foundry.glm.family.survival import SurvivalFamily
 from tests.util import assert_tensors_equal, assert_dict_of_tensors_equal
 
 
+@pytest.mark.parametrize(
+    argnames=["dist_log_prob", "weight", "expected_output"],
+    argvalues=[
+        (torch.tensor([[1., 2., 3.]]).T, torch.tensor([[1., 1., 1]]).T, torch.tensor([[1., 2., 3.]]).T),
+        (torch.tensor([[1., 2., 3.]]).T, torch.tensor([[2., .5, 3]]).T, torch.tensor([[2., 1., 9.]]).T)
+    ]
+)
+@patch('torch.distributions.Exponential.log_prob', autospec=True)
+def test_log_prob(
+        mock_exponential_log_prob: Mock,
+        dist_log_prob: torch.Tensor,
+        weight: torch.Tensor,
+        expected_output: torch.Tensor):
+    fam = SurvivalFamily.from_name('exponential')
+    mock_exponential_log_prob.return_value = dist_log_prob
+    dist = fam(rate=torch.zeros((3, 1)))
+    value = torch.tensor([1., 1., .5]).unsqueeze(-1)
+    #
+    actual_output = fam.log_prob(
+        distribution=dist,
+        value=value,
+        weight=weight
+    )
+    dist.log_prob.assert_called_once()
+    assert_tensors_equal(actual_output, expected_output)
+
+
+
 class TestSurvivalFamilyCensLogProb:
     @dataclass
     class Params:
@@ -168,6 +196,3 @@ class TestSurvivalFamilyCensLogProb:
 
     def test_lp_output(self, setup: Fixture):
         assert_tensors_equal(setup.expected_output_log_prob, setup.actual_output_log_prob)
-
-# todo: _interval_log_prob
-# todo: _truncate_log_probs
