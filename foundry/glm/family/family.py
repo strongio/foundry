@@ -22,6 +22,12 @@ class Family:
             distributions.NegativeBinomial,
             {'probs': transforms.SigmoidTransform(), 'total_count': transforms.ExpTransform()}
         ),
+        'exponential': (
+            torch.distributions.Exponential,
+            {
+                'rate': transforms.ExpTransform(),
+            }
+        ),
         'weibull': (
             torch.distributions.Weibull,
             {

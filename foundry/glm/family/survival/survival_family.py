@@ -5,7 +5,7 @@ from torch import distributions
 from torch.distributions import transforms
 
 from foundry.util import to_1d, is_invalid, to_2d
-from .weibull_distribution import CeilingWeibull
+from .distributions import CeilingWeibull
 from ..family import Family
 from ..util import subset_distribution, log1mexp
 

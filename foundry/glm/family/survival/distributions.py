@@ -1,10 +1,21 @@
 from typing import Union, Optional
 
 import torch
-from torch.distributions import Weibull, constraints
+from torch.distributions import Weibull, Exponential, constraints
 from torch.distributions.utils import broadcast_all
 
 from ..util import log1mexp
+
+
+def exp_log_surv(self: Exponential, value: torch.Tensor) -> torch.Tensor:
+    value, rate = broadcast_all(value, self.rate)
+    log_surv = torch.zeros_like(value)
+    nonzero = ~torch.isclose(value, torch.zeros_like(value))
+    log_surv[nonzero] = -value[nonzero] * rate[nonzero]
+    return log_surv
+
+
+Exponential.log_surv = exp_log_surv
 
 
 def weibull_log_surv(self: Weibull, value: torch.Tensor) -> torch.Tensor:

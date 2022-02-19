@@ -2,11 +2,11 @@ from dataclasses import dataclass
 
 import pytest
 import torch
-from torch.distributions import Weibull
+from torch.distributions import Exponential, Weibull
 
 from foundry.glm.family import Family
-from foundry.glm.family.survival.weibull_distribution import weibull_log_surv, CeilingWeibull
-from tests.util import assert_scalars_equal
+from foundry.glm.family.survival.distributions import weibull_log_surv, CeilingWeibull
+from tests.util import assert_scalars_equal, assert_tensors_equal
 
 
 @pytest.mark.parametrize(
@@ -31,6 +31,19 @@ def test_weibull_log_surv_equiv(params: dict, value: float):
     actual2 = weibull.log_surv(value).exp()
     assert_scalars_equal(actual1, expected, tol=.001)
     assert_scalars_equal(actual2, expected, tol=.001)
+
+
+@pytest.mark.parametrize(
+    argnames=["rate"],
+    argvalues=[(r / 5,) for r in range(1, 10)]
+)
+def test_exponential_log_surv(rate: float):
+    value = torch.linspace(.5, 5, steps=10)
+    assert_tensors_equal(
+        Exponential(rate=rate).log_surv(value),
+        Weibull(scale=1 / rate, concentration=1).log_surv(value),
+        tol=.001
+    )
 
 
 class TestCeilingWeibull:
