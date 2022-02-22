@@ -1,33 +1,37 @@
 from collections import namedtuple
 from dataclasses import dataclass
 from typing import Optional, Dict, Sequence, Type
-from unittest.mock import Mock
+from unittest.mock import Mock, PropertyMock, patch
 
 import numpy as np
 import pandas as pd
 import pytest
 import torch
 from sklearn.exceptions import NotFittedError
-from torch.distributions.transforms import identity_transform
+from torch.distributions import constraints, identity_transform
 
 from foundry.glm.family import Family
 from foundry.glm.glm import ModelMatrix, Glm
 from foundry.glm.util import NoWeightModule
 from foundry.util import to_2d
-from tests.util import assert_dict_of_tensors_equal
+from tests.util import assert_dict_of_tensors_equal, assert_scalars_equal
 
 
 class _FakeDist:
     arg_constraints = {
-        'param1': identity_transform,
-        'param2': identity_transform
+        'param1': constraints.real,
+        'param2': constraints.real
     }
+
+    def __init__(self, param1: torch.Tensor, param2: torch.Tensor):
+        self.param1 = param1
+        self.param2 = param2
 
 
 @pytest.fixture()
 def family() -> Family:
     return Family(
-        distribution_cls=_FakeDist(),
+        distribution_cls=_FakeDist,
         params_and_links={k: identity_transform for k in _FakeDist.arg_constraints}
     )
 
@@ -136,7 +140,7 @@ class TestBuildModelMats:
                 expect_y=False,
                 expected_xdict={k: torch.stack([torch.arange(5), -torch.arange(5.)], 1)
                                 for k in ['param1', 'param2']},
-                expected_ydict={}
+                expected_ydict=None
             ),
             Params(
                 description="weights are wrong shape",
@@ -182,9 +186,10 @@ class TestBuildModelMats:
             ),
         ]
     )
-    def setup(self, glm: Glm, request: 'FixtureRequest') -> Fixture:
+    @patch('foundry.glm.glm.Glm.expected_model_mat_params_', new_callable=PropertyMock)
+    def setup(self, mock_expected_model_mat_params_: PropertyMock, glm: Glm, request: 'FixtureRequest') -> Fixture:
         # this would be set when initializing the module:
-        glm.expected_model_mat_params_ = request.param.mm_params
+        mock_expected_model_mat_params_.return_value = request.param.mm_params
 
         # call, capturing exceptions if they're expected:
         exception = None
@@ -194,7 +199,7 @@ class TestBuildModelMats:
                 X=request.param.X,
                 y=request.param.y,
                 sample_weight=request.param.sample_weight,
-                expect_y=request.param.expect_y
+                include_y=request.param.expect_y
             )
         except Exception as e:
             if not request.param.expected_exception:
@@ -223,7 +228,7 @@ class TestBuildModelMats:
                 raise setup.exception
 
 
-class TestInit_module:
+class TestInit_Module:
     @pytest.fixture()
     def glm(self, family: Family):
         class TestGlm(Glm):
@@ -298,8 +303,8 @@ class TestInit_module:
             with pytest.raises(expected_exception):
                 glm._init_module(X=X, y=y)
         else:
-            result = glm._init_module(X=X, y=y)
-            result_sd_shapes = {k: v.shape for k, v in result.state_dict().items()}
+            glm.module_ = glm._init_module(X=X, y=y)
+            result_sd_shapes = {k: v.shape for k, v in glm.module_.state_dict().items()}
             expected_result_sd_shapes = {k: v.shape for k, v in expected_result.state_dict().items()}
             assert result_sd_shapes == expected_result_sd_shapes
             if isinstance(X, dict):
@@ -323,16 +328,58 @@ def test__get_penalty():
 
     Also test that penalty has the expected directionality: bigger weights mean larger penalty.
     """
-    # TODO
     pass
 
 
-def test_log_prob():
+def test__get_dist_kwargs():
+    pass
+
+
+# @formatter:off
+@pytest.mark.parametrize(
+    argnames=['value', 'weight', 'penalty', 'expected_lp'],
+    argvalues=[
+        (torch.tensor([1., 2.]), None,                   0., torch.tensor([-1.5])),
+        (torch.tensor([1., 2.]), torch.tensor([2., 1.]), 0., torch.tensor([-4 / 3.])),
+        (torch.tensor([1., 2.]), None,                   9., torch.tensor([-6.])),
+        (torch.tensor([1., 2.]), torch.tensor([2., 1.]), 8., torch.tensor([-4.])),
+    ]
+)
+# @formatter:on
+def test_log_prob(value: torch.Tensor,
+                  weight: Optional[torch.Tensor],
+                  penalty: float,
+                  expected_lp: torch.Tensor,
+                  family: Family):
     """
     Test that family.log_prob and _get_penalty are called, and that increasing the penalty decreases the log prob.
     """
-    # TODO
-    pass
+    # init glm:
+    glm = Glm(family=family, penalty=penalty)
+
+    # mock family.log_prob
+    family.log_prob = Mock(autospec=family.log_prob)
+    family.log_prob.side_effect = lambda distribution, value, weight: -value * weight
+
+    # mock penalty:
+    glm._get_penalty = Mock(autospec=glm._get_penalty)
+    glm._get_penalty.return_value = penalty
+
+    # init module:
+    y = {'value': value}
+    if weight is not None:
+        y['weight'] = weight
+    glm._module_ = glm._init_module({}, y=y)
+
+    # call get_log_prob:
+    mm_dict, lp_dict = glm._build_model_mats(X={}, y=y, include_y=True)
+    lp = glm.get_log_prob(mm_dict, lp_dict)
+
+    # should have called family.log_prob:
+    family.log_prob.assert_called()
+
+    # log-prob should match expectation:
+    assert_scalars_equal(lp, expected_lp)
 
 
 def test_fit():

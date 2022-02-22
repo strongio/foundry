@@ -18,7 +18,7 @@ from tests.util import assert_tensors_equal, assert_dict_of_tensors_equal
     ]
 )
 @patch('torch.distributions.Exponential.log_prob', autospec=True)
-def test_log_prob(
+def test_log_prob_weights(
         mock_exponential_log_prob: Mock,
         dist_log_prob: torch.Tensor,
         weight: torch.Tensor,
@@ -31,7 +31,7 @@ def test_log_prob(
     actual_output = fam.log_prob(
         distribution=dist,
         value=value,
-        weight=weight
+        weight=weight,
     )
     dist.log_prob.assert_called_once()
     assert_tensors_equal(actual_output, expected_output)

@@ -33,7 +33,6 @@ class Glm(BaseEstimator):
 
         # set in _init_module:
         self._module_ = None
-        self.expected_model_mat_params_ = None
 
         # updated on each fit():
         self._fit_failed = 0
@@ -50,13 +49,7 @@ class Glm(BaseEstimator):
 
     @property
     def expected_model_mat_params_(self) -> Sequence[str]:
-        if self._expected_model_mat_params_ is None:
-            raise NotFittedError("Tried to access `expected_model_mat_params_` prior to fitting.")
-        return self._expected_model_mat_params_
-
-    @expected_model_mat_params_.setter
-    def expected_model_mat_params_(self, value: Sequence[str]):
-        self._expected_model_mat_params_ = value
+        return [p for p, m in self.module_.items() if not isinstance(m, NoWeightModule)]
 
     def fit(self,
             X: ModelMatrix,
@@ -123,7 +116,7 @@ class Glm(BaseEstimator):
         self.optimizer_ = self._init_optimizer()
 
         # build model-mats:
-        mm_dict, lp_dict = self._build_model_mats(X, y, sample_weight, expect_y=True)
+        mm_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
 
         # progress bar:
         prog = None
@@ -177,6 +170,9 @@ class Glm(BaseEstimator):
         return self
 
     def get_log_prob(self, mm_dict: dict, lp_dict: dict, reduce: bool = True) -> torch.Tensor:
+        """
+        Get the penalized log prob, applying weights as needed.
+        """
         log_probs = self.family.log_prob(self.family(**self._get_dist_kwargs(**mm_dict)), **lp_dict)
         penalty = self._get_penalty()
         if reduce:
@@ -188,7 +184,15 @@ class Glm(BaseEstimator):
         """
         Call each entry in the module_ dict to get predicted family params.
         """
-        return {dp: self.module_[dp](kwargs[dp]) for dp in self.module_}
+        out = {}
+        for dp in self.module_:
+            if dp in self.expected_model_mat_params_:
+                out[dp] = self.module_[dp](kwargs.pop(dp))
+            else:
+                out[dp] = self.module_[dp](kwargs.get(dp, None))
+        if kwargs:
+            warn(f"Unrecognized kwargs to `_get_dist_kwargs()`: {set(kwargs)}")
+        return out
 
     def _get_xdict(self, X: ModelMatrix) -> Dict[str, torch.Tensor]:
         _to_kwargs = get_to_kwargs(self.module_)
@@ -257,12 +261,12 @@ class Glm(BaseEstimator):
                           X: ModelMatrix,
                           y: Optional[ModelMatrix],
                           sample_weight: Optional[np.ndarray] = None,
-                          expect_y: bool = False) -> Tuple[dict, dict]:
+                          include_y: bool = False) -> Tuple[dict, Optional[dict]]:
         """
         :param X: A dataframe/ndarray/tensor, or dictionary of these.
         :param y: An optional dataframe/ndarray/tensor, or dictionary of these.
         :param sample_weight: Optional sample-weights
-        :param expect_y: If True, then will raise if y is not present.
+        :param include_y: If True, then will raise if y is not present; if False, will return None in place of y.
         :return: Two dictionaries: one of model-mat kwargs (for prediction) and one of target-related kwargs
          (for evaluation i.e. log-prob).
         """
@@ -270,15 +274,15 @@ class Glm(BaseEstimator):
 
         Xdict = self._get_xdict(X)
 
-        if not expect_y:
-            return Xdict, {}
+        if not include_y:
+            return Xdict, None
 
         if y is None:
             raise ValueError("Must pass `y` when fitting.")
 
         ydict = self._get_ydict(y=y, sample_weight=sample_weight)
 
-        if list(Xdict.values())[0].shape[0] != ydict['value'].shape[0]:
+        if Xdict and list(Xdict.values())[0].shape[0] != ydict['value'].shape[0]:
             raise ValueError("Expected X.shape[0] to match y.shape[0]")
 
         return Xdict, ydict
@@ -290,28 +294,27 @@ class Glm(BaseEstimator):
                 raise ValueError(f"X should be a subset of {self.family.params}")
         else:
             X = {dp: X for dp in self.family.params}
-        self.expected_model_mat_params_ = list(X)
 
         if isinstance(y, dict):
             y = y['value']
         y = to_2d(np.asanyarray(y))
+        output_dim = y.shape[1]
 
         out = torch.nn.ModuleDict()
         for dp in self.family.params:
             Xp = X.get(dp, None)
-            out[dp] = self.module_factory(
-                input_dim=0 if Xp is None else Xp.shape[1],
-                output_dim=y.shape[1]
-            )
+            if Xp is None or not Xp.shape[1]:
+                out[dp] = NoWeightModule(dim=output_dim)
+            else:
+                out[dp] = self.module_factory(input_dim=Xp.shape[1], output_dim=output_dim)
+
         return out
 
     def module_factory(self, input_dim: int, output_dim: int) -> torch.nn.Module:
-        if input_dim:
-            out = torch.nn.Linear(in_features=input_dim, out_features=output_dim, bias=True)
-            with torch.no_grad():
-                out.weight.normal_(std=.1)
-        else:
-            out = NoWeightModule(dim=output_dim)
+        assert input_dim  # see _init_module
+        out = torch.nn.Linear(in_features=input_dim, out_features=output_dim, bias=True)
+        with torch.no_grad():
+            out.weight.normal_(std=.1)
         return out
 
     @staticmethod
