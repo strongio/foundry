@@ -1,4 +1,5 @@
 import os
+from functools import cached_property
 from time import sleep
 from typing import Union, Sequence, Optional, Callable, Tuple, Dict
 from warnings import warn
@@ -6,6 +7,7 @@ from warnings import warn
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn
 from sklearn.base import BaseEstimator
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
@@ -14,6 +16,7 @@ from tqdm.auto import tqdm
 from foundry.glm.family import Family
 from foundry.glm.family.survival import SurvivalFamily
 from foundry.glm.util import NoWeightModule
+from foundry.hessian import hessian
 from foundry.util import FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d
 
 ModelMatrix = Union[np.ndarray, pd.DataFrame, dict]
@@ -33,6 +36,12 @@ class Glm(BaseEstimator):
 
         # set in _init_module:
         self._module_ = None
+        self._module_param_names_ = None
+
+        # laplace params:
+        self._coef_mvnorm_ = None
+        self.converged_ = None
+        self._laplace_coefs_names_ = None
 
         # updated on each fit():
         self._fit_failed = 0
@@ -69,6 +78,7 @@ class Glm(BaseEstimator):
         :param max_iter:
         :param max_loss:
         :param verbose:
+        :param estimate_laplace_coefs:
         :return:
         """
         self.family = self._init_family(self.family)
@@ -100,7 +110,8 @@ class Glm(BaseEstimator):
              patience: int = 2,
              max_iter: int = 200,
              max_loss: float = 10.,
-             verbose: bool = True) -> 'Glm':
+             verbose: bool = True,
+             estimate_laplace_coefs: bool = True) -> 'Glm':
 
         # tallying fit-failurs:
         if self._fit_failed:
@@ -128,7 +139,7 @@ class Glm(BaseEstimator):
 
         def closure():
             self.optimizer_.zero_grad()
-            loss = -self.get_log_prob(mm_dict, lp_dict, reduce=True)
+            loss = -self.get_log_prob(mm_dict, lp_dict)
             if is_invalid(loss):
                 self._fit_failed += 1
                 raise FitFailedException("`nan`/`inf` loss")
@@ -167,18 +178,27 @@ class Glm(BaseEstimator):
             raise FitFailedException(f"train_loss ({train_loss}) too high")
 
         self._fit_failed = 0
+
+        if estimate_laplace_coefs:
+            if verbose:
+                print("Estimating laplace coefs... (you can safely keyboard-interrupt to cancel)")
+            try:
+                self.estimate_laplace_coefs(X=X, y=y, sample_weight=sample_weight)
+            except KeyboardInterrupt:
+                pass
+
         return self
 
-    def get_log_prob(self, mm_dict: dict, lp_dict: dict, reduce: bool = True) -> torch.Tensor:
+    def get_log_prob(self, mm_dict: dict, lp_dict: dict, mean: bool = True) -> torch.Tensor:
         """
         Get the penalized log prob, applying weights as needed.
         """
         log_probs = self.family.log_prob(self.family(**self._get_dist_kwargs(**mm_dict)), **lp_dict)
         penalty = self._get_penalty()
-        if reduce:
-            log_probs = log_probs.sum() - penalty
-            log_probs = log_probs / lp_dict['weight'].sum()
-        return log_probs
+        log_prob = log_probs.sum() - penalty
+        if mean:
+            log_prob = log_prob / lp_dict['weight'].sum()
+        return log_prob
 
     def _get_dist_kwargs(self, **kwargs) -> dict:
         """
@@ -300,25 +320,54 @@ class Glm(BaseEstimator):
         y = to_2d(np.asanyarray(y))
         output_dim = y.shape[1]
 
-        out = torch.nn.ModuleDict()
+        self._module_param_names_ = {}
+        self.module_ = torch.nn.ModuleDict()
         for dp in self.family.params:
             Xp = X.get(dp, None)
             if Xp is None or not Xp.shape[1]:
-                out[dp] = NoWeightModule(dim=output_dim)
+                # always use the base approach when no input features:
+                module, nms = Glm.module_factory(X=None, output_dim=output_dim)
             else:
-                out[dp] = self.module_factory(input_dim=Xp.shape[1], output_dim=output_dim)
+                module, nms = self.module_factory(X=Xp, output_dim=output_dim)
+            self.module_[dp] = module
+            self._module_param_names_[dp] = {k: np.asarray(v) for k, v in nms.items()}
 
-        return out
+        return self.module_
 
-    def module_factory(self, input_dim: int, output_dim: int) -> torch.nn.Module:
-        assert input_dim  # see _init_module
-        out = torch.nn.Linear(in_features=input_dim, out_features=output_dim, bias=True)
-        with torch.no_grad():
-            out.weight.normal_(std=.1)
-        return out
+    @classmethod
+    def module_factory(cls,
+                       X: Union[None, pd.DataFrame, np.ndarray],
+                       output_dim: int) -> Tuple[torch.nn.Module, dict]:
+        """
+        Given a model-matrix and output-dim, produce a ``torch.nn.Module`` that predicts a distribution-parameter. The
+        default produces a ``torch.nn.Linear`` layer. Additionally, this function returns a dictionary whose keys are
+        param-names and whose values are the names of the individual elements. For the default case, each weight is
+        named according to the column-names in X (if X is a dataframe).
 
-    @staticmethod
-    def penalty_from_module(module: torch.nn.Module, penalty_multi: float) -> torch.Tensor:
+        :param X: A dataframe or ndarray.
+        :param output_dim: The number of output dimensions.
+        :return: A tuple of (module, dict). The dictionary should correspond to ``module.named_parameters()``: the dict
+         keys should be module param-names, and the dict values should be arrays (or coercible to arrays) of strings
+         whose shape matches the parameter shapes.
+        """
+        if X is None or not X.shape[1]:
+            module = NoWeightModule(dim=output_dim)
+            columns = []
+        else:
+            module = torch.nn.Linear(in_features=X.shape[1], out_features=output_dim, bias=True)
+            with torch.no_grad():
+                module.weight.normal_(std=.1)
+            columns = list(X.columns) if hasattr(X, 'columns') else [f'x{i}' for i in range(X.shape[1])]
+
+        module_param_names = {'bias': [], 'weight': []}
+        for i in range(output_dim):
+            module_param_names['bias'].append(f'y{i}__bias')
+            module_param_names['weight'].append([f'y{i}__{c}' for c in columns])
+
+        return module, module_param_names
+
+    @classmethod
+    def penalty_from_module(cls, module: torch.nn.Module, penalty_multi: float) -> torch.Tensor:
         feature_dist = torch.distributions.Normal(loc=0, scale=1 / penalty_multi ** .5, validate_args=False)
         return -feature_dist.log_prob(module.weight).sum()
 
@@ -375,17 +424,73 @@ class Glm(BaseEstimator):
             return torch.zeros(1, **get_to_kwargs(self.module_))
 
         if isinstance(self.penalty, dict):
-            penalties = self.penalty
+            penalty_multis = self.penalty
             if set(self.penalty) != set(self.module_.keys()):
                 raise ValueError(
                     f"``self.penalty.keys()`` is {set(self.penalty)}, but expected {set(self.module_.keys())}"
                 )
         else:
-            penalties = {k: self.penalty for k in self.module_.keys()}
+            penalty_multis = {k: self.penalty for k in self.module_.keys()}
 
         to_sum = [torch.tensor(0., **get_to_kwargs(self.module_))]
         for dp, module in self.module_.items():
             to_sum.append(
-                self.penalty_from_module(module, penalty_multi=penalties[dp])
+                self.penalty_from_module(module, penalty_multi=penalty_multis[dp])
             )
         return torch.stack(to_sum).sum()
+
+    @property
+    def coef_dataframe_(self) -> pd.DataFrame:
+        if self._coef_mvnorm_ is None:
+            raise RuntimeError("Must call ``estimate_laplace_coefs()`` first.")
+        out = []
+        with torch.no_grad():
+            ses = self._coef_mvnorm_.covariance_matrix.diag().sqrt()
+            for name, estimate, se in zip(self._laplace_coefs_names_, self._coef_mvnorm_.mean, ses):
+                estimate = estimate.item()
+                se = se.item()
+                if not self.converged_:
+                    se = float('nan')
+                out.append({'name': name, 'estimate': estimate, 'se': se})
+        return pd.DataFrame(out)
+
+    def estimate_laplace_coefs(self, X: ModelMatrix, y: ModelMatrix, sample_weight: Optional[np.ndarray] = None):
+        self._laplace_coefs_names_, means, hess = self._estimate_laplace_coefs(X=X, y=y, sample_weight=sample_weight)
+
+        # create mvnorm for laplace approx:
+        with torch.no_grad():
+            cov = torch.inverse(hess)
+            try:
+                self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
+                    means, covariance_matrix=cov, validate_args=True
+                )
+                self.converged_ = True
+            except ValueError as e:
+                if 'constraint PositiveDefinite' in str(e):
+                    warn(f"Model failed to converge; `laplace_params` cannot be estimated. cov.diag():\n{cov.diag()}")
+                    fake_cov = torch.eye(hess.shape[0]) * 1e-10
+                    self._coef_mvnorm_ = torch.distributions.MultivariateNormal(means, covariance_matrix=fake_cov)
+                    self.converged_ = False
+                else:
+                    raise e
+
+    def _estimate_laplace_coefs(self,
+                                X: ModelMatrix,
+                                y: ModelMatrix,
+                                sample_weight: Optional[np.ndarray] = None
+                                ) -> Tuple[Sequence[str], torch.Tensor, torch.Tensor]:
+        all_param_names = []
+        all_params = []
+        for dp in self.family.params:
+            for nm, param_values in self.module_[dp].named_parameters():
+                param_names = self._module_param_names_[dp][nm]
+                assert param_names.shape == param_values.shape, f"param_names.shape!=param_values.shape for {dp}.{nm}"
+                all_param_names.extend(f"{dp}__{pnm}" for pnm in param_names.reshape(-1))
+                all_params.append(param_values)  # TODO: any way to assert reshape(-1) matches internals of hessian?
+        means = torch.cat([p.reshape(-1) for p in all_params])
+
+        mm_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
+        log_prob = self.get_log_prob(mm_dict=mm_dict, lp_dict=lp_dict, mean=False)
+        hess = hessian(output=-log_prob, inputs=all_params, allow_unused=True, progress=False)
+
+        return all_param_names, means, hess
