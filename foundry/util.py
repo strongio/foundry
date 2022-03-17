@@ -1,6 +1,7 @@
 from typing import Union
 
 import numpy as np
+import pandas as pd
 import torch
 
 ArrayType = Union[np.ndarray, torch.Tensor]
@@ -38,6 +39,10 @@ class FitFailedException(RuntimeError):
 
 
 class SliceDict(dict):
+    """
+    Adapted from https://github.com/skorch-dev/skorch/blob/baf0580/skorch/helper.py#L20
+    """
+
     def __init__(self, **kwargs):
         lens = [v.shape[0] for v in kwargs.values()]
         num_lens = len(set(lens))
@@ -87,6 +92,25 @@ class SliceDict(dict):
 
     def __eq__(self, other) -> bool:
         raise NotImplementedError
+
+
+class ToSliceDict:
+    """
+    For use in sklearn pipelines (e.g. ``make_pipeline(ToSliceDict(['probs']), Glm(family='negative_binomial'))``).
+    """
+
+    def __init__(self, dist_params: list):
+        # TODO: support dictionary w/keys as params and values as col-names/indices
+        self.dist_params = dist_params
+
+    def get_params(self) -> dict:
+        return {'dist_params': self.dist_params}
+
+    def transform(self, X: pd.DataFrame) -> SliceDict:
+        return SliceDict(**{p: X for p in self.dist_params})
+
+    def fit(self, X: pd.DataFrame, y: np.ndarray):
+        return self
 
 
 def to_1d(arr: ArrayType) -> ArrayType:
