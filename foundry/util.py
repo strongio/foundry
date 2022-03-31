@@ -1,3 +1,4 @@
+import copy
 from typing import Union
 
 import numpy as np
@@ -103,8 +104,8 @@ class ToSliceDict:
         # TODO: support dictionary w/keys as params and values as col-names/indices
         self.dist_params = dist_params
 
-    def get_params(self) -> dict:
-        return {'dist_params': self.dist_params}
+    def get_params(self, deep: bool = True) -> dict:
+        return {'dist_params': copy.deepcopy(self.dist_params) if deep else self.dist_params}
 
     def transform(self, X: pd.DataFrame) -> SliceDict:
         return SliceDict(**{p: X for p in self.dist_params})
