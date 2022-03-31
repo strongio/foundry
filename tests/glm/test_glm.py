@@ -231,14 +231,8 @@ class TestBuildModelMats:
 class TestInit_Module:
     @pytest.fixture()
     def glm(self, family: Family):
-        class TestGlm(Glm):
-            def module_factory(self, input_dim: int, output_dim: int) -> torch.nn.Module:
-                if not input_dim:
-                    return NoWeightModule(dim=output_dim)
-                return torch.nn.Linear(in_features=input_dim, out_features=output_dim, bias=True)
-
-        glm = TestGlm(family=family)
-        return glm
+        # todo: we're not mocking module_factory, so more of an integration test.
+        return Glm(family=family)
 
     Params = namedtuple('Params', ['description', 'X', 'y', 'expected_result', 'expected_exception'])
 
