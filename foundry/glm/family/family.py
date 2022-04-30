@@ -18,6 +18,10 @@ class Family:
             distributions.Binomial,
             {'probs': transforms.SigmoidTransform()}  # TODO: support total_count?
         ),
+        'poisson': (
+            distributions.Poisson,
+            {'rate': transforms.ExpTransform()}
+        ),
         'negative_binomial': (
             distributions.NegativeBinomial,
             {'probs': transforms.SigmoidTransform(), 'total_count': transforms.ExpTransform()}
