@@ -15,7 +15,7 @@ from tqdm.auto import tqdm
 
 from foundry.glm.family import Family
 from foundry.glm.family.survival import SurvivalFamily
-from foundry.glm.util import NoWeightModule
+from foundry.glm.util import NoWeightModule, Stopping
 from foundry.hessian import hessian
 from foundry.util import FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d
 
@@ -30,9 +30,11 @@ class Glm(BaseEstimator):
 
     def __init__(self,
                  family: Union[str, Family],
-                 penalty: Union[float, Sequence[float], Dict[str, float]] = 0.):
+                 penalty: Union[float, Sequence[float], Dict[str, float]] = 0.,
+                 predict_params: Optional[Sequence[str]] = None):
         self.family = family
         self.penalty = penalty
+        self.predict_params = predict_params
 
         # set in _init_module:
         self._module_ = None
@@ -73,8 +75,8 @@ class Glm(BaseEstimator):
         :param groups:
         :param reset:
         :param callbacks:
-        :param tol:
-        :param patience:
+        :param stopping: args/kwargs to pass to :class:`foundry.glm.util.Stopping` (e.g. ``(.01,)`` would
+         use abstol of .01).
         :param max_iter:
         :param max_loss:
         :param verbose:
@@ -106,8 +108,7 @@ class Glm(BaseEstimator):
              sample_weight: Optional[np.ndarray] = None,
              reset: bool = False,
              callbacks: Sequence[Callable] = (),
-             tol: float = .0001,
-             patience: int = 2,
+             stopping: Union['Stopping', tuple, dict] = (.001,),
              max_iter: int = 200,
              max_loss: float = 10.,
              verbose: bool = True,
@@ -125,6 +126,15 @@ class Glm(BaseEstimator):
 
         # optimizer:
         self.optimizer_ = self._init_optimizer()
+
+        # stopping:
+        if isinstance(stopping, dict):
+            stopping = Stopping(**stopping, optimizer=self.optimizer_)
+        elif isinstance(stopping, (list, tuple)):
+            stopping = Stopping(*stopping, optimizer=self.optimizer_)
+        else:
+            assert isinstance(stopping, Stopping)
+            stopping.optimizer = self.optimizer_
 
         # build model-mats:
         mm_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
@@ -146,27 +156,25 @@ class Glm(BaseEstimator):
             loss.backward()
             if prog:
                 prog.update()
-                prog.set_description(f'Epoch: {epoch}; Loss: {loss:.4f}')
+                prog.set_description(
+                    f"Epoch {epoch:,}; Loss {loss.item():.4}; Convergence {stopping.get_info()}"
+                )
             return loss
 
         # fit-loop:
         assert max_iter > 0
-        prev_train_loss = float('inf')
-        num_lower = 0
         for epoch in range(max_iter):
             try:
                 if prog:
                     prog.reset()
+                    prog.set_description(f"Epoch {epoch:,}; Loss -; Convergence {stopping.get_info()}")
                 train_loss = self.optimizer_.step(closure).item()
                 for callback in callbacks:
                     callback(self, train_loss)
-                if abs(train_loss - prev_train_loss) < tol:
-                    num_lower += 1
-                else:
-                    num_lower = 0
-                if num_lower == patience:
+
+                if stopping(train_loss):
                     break
-                prev_train_loss = train_loss
+
             except KeyboardInterrupt:
                 sleep(1)
                 break
@@ -313,7 +321,7 @@ class Glm(BaseEstimator):
             if not set(X.keys()).issubset(set(self.family.params)):
                 raise ValueError(f"X should be a subset of {self.family.params}")
         else:
-            X = {dp: X for dp in self.family.params}
+            X = {dp: X for dp in self.predict_params or self.family.params}
 
         if isinstance(y, dict):
             y = y['value']
