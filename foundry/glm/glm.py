@@ -27,11 +27,27 @@ from sklearn.exceptions import NotFittedError
 
 
 class Glm(BaseEstimator):
+    """
+    :param family: Either a :class:`foundry.glm.family.Family`, or a string alias. You can see available aliases with
+     ``Glm.family_aliases()``.
+    :param penalty: A penalty-multiplier to shrink coefficients. Can be a single float, or a dictionary of these to
+     support different penalties per distribution-parameter. Instead of floats, can also pass functions that take a
+     ``torch.nn.Module`` as the first argument and that module's param-names as second argument, and returns a scalar
+     penalty.
+    :param predict_params: Many distributions have multiple parameters: for example the normal distribution has a
+     location and scale parameter. If a single dataframe/matrix is passed to  ``fit()``, the default behavior is to
+     use these to separately predict each of loc/scale. Sometimes this is not desired: for example, we only want to use
+     predictors to predict the location, and the scale should be 'intercept only'. This can be accomplished with
+     `predict_params=['loc']` (replacing 'loc' with the relevant name(s) for your distribution of interest. For finer-
+     grained control (e.g. using some predictors for some params and others for others), see options about passing a
+     dictionary to ``fit()``.
+    """
 
     def __init__(self,
                  family: Union[str, Family],
                  penalty: Union[float, Sequence[float], Dict[str, float]] = 0.,
                  predict_params: Optional[Sequence[str]] = None):
+
         self.family = family
         self.penalty = penalty
         self.predict_params = predict_params
@@ -69,7 +85,8 @@ class Glm(BaseEstimator):
             groups: Optional[np.ndarray] = None,
             **kwargs) -> 'Glm':
         """
-        :param X:
+        :param X: A dataframe/array of predictors, or a dictionary of these. If a dict, then keys should correspond to
+         ``self.family.params``.
         :param y:
         :param sample_weight:
         :param groups:
@@ -91,6 +108,12 @@ class Glm(BaseEstimator):
             if groups is not None:
                 warn("`groups` argument will be ignored because self.penalty is a single value not a sequence.")
             return self._fit(X=X, y=y, sample_weight=sample_weight, **kwargs)
+
+    @staticmethod
+    def family_aliases() -> dict:
+        out = Family.aliases.copy()
+        out.update({f'survival_{nm}': f for f, nm in SurvivalFamily.aliases.items()})
+        return out
 
     @staticmethod
     def _init_family(family: Union[Family, str]) -> Family:
@@ -229,6 +252,7 @@ class Glm(BaseEstimator):
         if isinstance(X, dict):
             Xdict = X.copy()
         else:
+            # TODO: if originally passed a dict but are now passing a dataframe, this will lead to cryptic errors later
             Xdict = {p: X for p in self.expected_model_mat_params_}
 
         # validate:
@@ -374,11 +398,6 @@ class Glm(BaseEstimator):
 
         return module, module_param_names
 
-    @classmethod
-    def penalty_from_module(cls, module: torch.nn.Module, penalty_multi: float) -> torch.Tensor:
-        feature_dist = torch.distributions.Normal(loc=0, scale=1 / penalty_multi ** .5, validate_args=False)
-        return -feature_dist.log_prob(module.weight).sum()
-
     def _init_optimizer(self) -> torch.optim.Optimizer:
         return torch.optim.LBFGS(
             self.module_.parameters(), max_iter=10, line_search_fn='strong_wolfe', lr=.25
@@ -431,21 +450,37 @@ class Glm(BaseEstimator):
         if not self.penalty:
             return torch.zeros(1, **get_to_kwargs(self.module_))
 
+        # standardize to dictionary with param-names:
         if isinstance(self.penalty, dict):
-            penalty_multis = self.penalty
             if set(self.penalty) != set(self.module_.keys()):
                 raise ValueError(
                     f"``self.penalty.keys()`` is {set(self.penalty)}, but expected {set(self.module_.keys())}"
                 )
         else:
-            penalty_multis = {k: self.penalty for k in self.module_.keys()}
+            self.penalty = {k: self.penalty for k in self.module_.keys()}
 
-        to_sum = [torch.tensor(0., **get_to_kwargs(self.module_))]
-        for dp, module in self.module_.items():
+        # standardize to values = callables:
+        for param_name in list(self.penalty):
+            maybe_callable = self.penalty[param_name]
+            if not callable(maybe_callable):
+                self.penalty[param_name] = self.penalty_fun_from_multi(maybe_callable)
+
+        # call each:
+        to_sum = []
+        for param_name, penalty_fun in self.penalty.items():
             to_sum.append(
-                self.penalty_from_module(module, penalty_multi=penalty_multis[dp])
+                penalty_fun(self.module_[param_name], self._module_param_names_[param_name])
             )
         return torch.stack(to_sum).sum()
+
+    @classmethod
+    def penalty_fun_from_multi(cls, penalty_multi: float) -> callable:
+
+        def fun(module: torch.nn.Module, module_param_names: dict) -> torch.Tensor:
+            feature_dist = torch.distributions.Normal(loc=0, scale=1 / penalty_multi ** .5, validate_args=False)
+            return -feature_dist.log_prob(module.weight).sum()
+
+        return fun
 
     @property
     def coef_dataframe_(self) -> pd.DataFrame:
