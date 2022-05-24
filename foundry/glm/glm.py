@@ -104,7 +104,7 @@ class Glm(BaseEstimator):
              X: ModelMatrix,
              y: ModelMatrix,
              sample_weight: Optional[np.ndarray] = None,
-             reset: bool = False,
+             reset: bool = True,
              callbacks: Sequence[Callable] = (),
              tol: float = .0001,
              patience: int = 2,
@@ -121,6 +121,8 @@ class Glm(BaseEstimator):
 
         # build model:
         if self._module_ is None or reset:
+            if self.module_ is not None and verbose:
+                warn("Resetting module with reset=True")
             self.module_ = self._init_module(X, y)
 
         # optimizer:
