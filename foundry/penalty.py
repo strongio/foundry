@@ -17,11 +17,15 @@ class L2(Penalty):
 
     :param precision: Module weights will have penalties equivalent to gaussian priors; this is the precision for that
      gaussian distribution. Can also be a dictionary with names corresponding to feature-names.
-    :param mean: See above; the mean of this guassian (default zero). Can be a dictionary with feature-names.
+    :param mean: See above; the mean of this gaussian (default zero). Can be a dictionary with feature-names.
     """
     def __init__(self, precision: Union[float, dict], mean: Union[float, dict] = 0.):
-        self.precision = precision
+        if not isinstance(mean, dict):
+            mean = {'_default': mean}
         self.mean = mean
+        if not isinstance(precision, dict):
+            precision = {'_default': precision}
+        self.precision = precision
 
     def __call__(self, module: torch.nn.Module, module_param_names: Dict[str, np.ndarray]) -> torch.Tensor:
         if set(module_param_names) != {'bias', 'weight'}:
@@ -29,12 +33,7 @@ class L2(Penalty):
 
         to = get_to_kwargs(module)
 
-        if not isinstance(self.mean, dict):
-            self.mean = {'_default': self.precision}
-        if not isinstance(self.precision, dict):
-            self.precision = {'_default': self.precision}
-
-        feature_nms = module_param_names['weight'].reshape(-1)
+        feature_nms = list(module_param_names['weight'].reshape(-1))
         try:
             means = torch.tensor([self.mean.get(nm, self.mean['_default']) for nm in feature_nms], **to)
             precisions = torch.tensor([self.precision.get(nm, self.precision['_default']) for nm in feature_nms], **to)

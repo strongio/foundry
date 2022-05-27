@@ -376,8 +376,8 @@ class Glm(BaseEstimator):
         """
         Given a model-matrix and output-dim, produce a ``torch.nn.Module`` that predicts a distribution-parameter. The
         default produces a ``torch.nn.Linear`` layer. Additionally, this function returns a dictionary whose keys are
-        param-names and whose values are the names of the individual elements. For the default case, each weight is
-        named according to the column-names in X (if X is a dataframe).
+        param-names and whose values are the names of the individual param-elements. For the default case, each weight
+        is named according to the column-names in X (or "x{i}" if X is not a dataframe).
 
         :param X: A dataframe or ndarray.
         :param output_dim: The number of output dimensions.
@@ -395,9 +395,15 @@ class Glm(BaseEstimator):
             columns = list(X.columns) if hasattr(X, 'columns') else [f'x{i}' for i in range(X.shape[1])]
 
         module_param_names = {'bias': [], 'weight': []}
-        for i in range(output_dim):
-            module_param_names['bias'].append(f'y{i}__bias')
-            module_param_names['weight'].append([f'y{i}__{c}' for c in columns])
+        if output_dim == 1:
+            # for most common case of 1d output, param names are just feature-names
+            module_param_names['bias'].append('bias')
+            module_param_names['weight'].append(columns)
+        else:
+            # if multi-output, we prefix with output idx:
+            for i in range(output_dim):
+                module_param_names['bias'].append(f'y{i}__bias')
+                module_param_names['weight'].append([f'y{i}__{c}' for c in columns])
 
         return module, module_param_names
 
