@@ -39,7 +39,7 @@ class Glm(BaseEstimator):
      location and scale parameter. If a single dataframe/matrix is passed to  ``fit()``, the default behavior is to
      use these to separately predict each of loc/scale. Sometimes this is not desired: for example, we only want to use
      predictors to predict the location, and the scale should be 'intercept only'. This can be accomplished with
-     `predict_params=['loc']` (replacing 'loc' with the relevant name(s) for your distribution of interest. For finer-
+     `predict_params=['loc']` (replacing 'loc' with the relevant name(s) for your distribution of interest). For finer-
      grained control (e.g. using some predictors for some params and others for others), see options about passing a
      dictionary to ``fit()``.
     """
@@ -86,20 +86,28 @@ class Glm(BaseEstimator):
             groups: Optional[np.ndarray] = None,
             **kwargs) -> 'Glm':
         """
-        :param X: A dataframe/array of predictors, or a dictionary of these. If a dict, then keys should correspond to
+        :param X: A array/dataframe of predictors, or a dictionary of these. If a dict, then keys should correspond to
          ``self.family.params``.
-        :param y:
-        :param sample_weight:
-        :param groups:
-        :param reset:
-        :param callbacks:
-        :param stopping: args/kwargs to pass to :class:`foundry.glm.util.Stopping` (e.g. ``(.01,)`` would
-         use abstol of .01).
-        :param max_iter:
-        :param max_loss:
-        :param verbose:
-        :param estimate_laplace_coefs:
-        :return:
+        :param y: An array of targets. This can instead be a dictionary, with the target-value in the "value" entry,
+         and additional auxiliary information (e.g. sample-weights, upper/lower censoring for survival modeling) in
+         other entries.
+        :param sample_weight: The weight for each row. If performing cross-validation, this argument should not be used,
+         as sklearn does not support it; instead, pass a :class:`foundry.util.SliceDict` for the ``y`` argument, with a
+         'sample_weight' entry.
+        :param groups: todo
+        :param reset: If calling ``fit()`` more than once, should the module/weights be reinitialized. Default True.
+        :param callbacks: A list of callbacks: functions that take the ``Glm`` instance as a first argument and the
+         train-loss as a second argument.
+        :param stopping: Controls stopping based on converging loss/parameters. This argument is passed to
+         :class:`foundry.glm.util.Stopping` (e.g. ``(.01,)`` would use abstol of .01).
+        :param max_iter: The max. number of iterations before stopping training regardless of convergence. Default 200.
+        :param max_loss: If training stops and loss is higher than this, a class:`foundry.util.FitFailedException` will
+         be raised and fitting will be retried with a different set of inits.
+        :param verbose: Whether to allow print statements and a progress bar during training. Default True.
+        :param estimate_laplace_coefs: If true, then after fitting, the hessian of the optimzed parameters will be
+         estimated; this can then be used for confidence-intervals and statistical inference (see ``coef_dataframe_``).
+         Can set to False if you want to save time and skip this step.
+        :return: This ``Glm`` instance.
         """
         self.family = self._init_family(self.family)
 
