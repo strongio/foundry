@@ -17,6 +17,7 @@ from foundry.glm.family import Family
 from foundry.glm.family.survival import SurvivalFamily
 from foundry.glm.util import NoWeightModule, Stopping
 from foundry.hessian import hessian
+from foundry.penalty import L2
 from foundry.util import FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d
 
 ModelMatrix = Union[np.ndarray, pd.DataFrame, dict]
@@ -27,11 +28,27 @@ from sklearn.exceptions import NotFittedError
 
 
 class Glm(BaseEstimator):
+    """
+    :param family: Either a :class:`foundry.glm.family.Family`, or a string alias. You can see available aliases with
+     ``Glm.family_aliases()``.
+    :param penalty: A multiplier for L2 penalty on coefficients. Can be a single float, or a dictionary of these to
+     support different penalties per distribution-parameter. Instead of floats, can also pass functions that take a
+     ``torch.nn.Module`` as the first argument and that module's param-names as second argument, and returns a scalar
+     penalty that will be applied to the log-prob.
+    :param predict_params: Many distributions have multiple parameters: for example the normal distribution has a
+     location and scale parameter. If a single dataframe/matrix is passed to  ``fit()``, the default behavior is to
+     use these to separately predict each of loc/scale. Sometimes this is not desired: for example, we only want to use
+     predictors to predict the location, and the scale should be 'intercept only'. This can be accomplished with
+     `predict_params=['loc']` (replacing 'loc' with the relevant name(s) for your distribution of interest). For finer-
+     grained control (e.g. using some predictors for some params and others for others), see options about passing a
+     dictionary to ``fit()``.
+    """
 
     def __init__(self,
                  family: Union[str, Family],
                  penalty: Union[float, Sequence[float], Dict[str, float]] = 0.,
                  predict_params: Optional[Sequence[str]] = None):
+
         self.family = family
         self.penalty = penalty
         self.predict_params = predict_params
@@ -69,19 +86,28 @@ class Glm(BaseEstimator):
             groups: Optional[np.ndarray] = None,
             **kwargs) -> 'Glm':
         """
-        :param X:
-        :param y:
-        :param sample_weight:
-        :param groups:
-        :param reset:
-        :param callbacks:
-        :param stopping: args/kwargs to pass to :class:`foundry.glm.util.Stopping` (e.g. ``(.01,)`` would
-         use abstol of .01).
-        :param max_iter:
-        :param max_loss:
-        :param verbose:
-        :param estimate_laplace_coefs:
-        :return:
+        :param X: A array/dataframe of predictors, or a dictionary of these. If a dict, then keys should correspond to
+         ``self.family.params``.
+        :param y: An array of targets. This can instead be a dictionary, with the target-value in the "value" entry,
+         and additional auxiliary information (e.g. sample-weights, upper/lower censoring for survival modeling) in
+         other entries.
+        :param sample_weight: The weight for each row. If performing cross-validation, this argument should not be used,
+         as sklearn does not support it; instead, pass a :class:`foundry.util.SliceDict` for the ``y`` argument, with a
+         'sample_weight' entry.
+        :param groups: todo
+        :param reset: If calling ``fit()`` more than once, should the module/weights be reinitialized. Default True.
+        :param callbacks: A list of callbacks: functions that take the ``Glm`` instance as a first argument and the
+         train-loss as a second argument.
+        :param stopping: Controls stopping based on converging loss/parameters. This argument is passed to
+         :class:`foundry.glm.util.Stopping` (e.g. ``(.01,)`` would use abstol of .01).
+        :param max_iter: The max. number of iterations before stopping training regardless of convergence. Default 200.
+        :param max_loss: If training stops and loss is higher than this, a class:`foundry.util.FitFailedException` will
+         be raised and fitting will be retried with a different set of inits.
+        :param verbose: Whether to allow print statements and a progress bar during training. Default True.
+        :param estimate_laplace_coefs: If true, then after fitting, the hessian of the optimzed parameters will be
+         estimated; this can then be used for confidence-intervals and statistical inference (see ``coef_dataframe_``).
+         Can set to False if you want to save time and skip this step.
+        :return: This ``Glm`` instance.
         """
         self.family = self._init_family(self.family)
 
@@ -91,6 +117,12 @@ class Glm(BaseEstimator):
             if groups is not None:
                 warn("`groups` argument will be ignored because self.penalty is a single value not a sequence.")
             return self._fit(X=X, y=y, sample_weight=sample_weight, **kwargs)
+
+    @staticmethod
+    def family_aliases() -> dict:
+        out = Family.aliases.copy()
+        out.update({f'survival_{nm}': f for f, nm in SurvivalFamily.aliases.items()})
+        return out
 
     @staticmethod
     def _init_family(family: Union[Family, str]) -> Family:
@@ -231,6 +263,7 @@ class Glm(BaseEstimator):
         if isinstance(X, dict):
             Xdict = X.copy()
         else:
+            # TODO: if originally passed a dict but are now passing a dataframe, this will lead to cryptic errors later
             Xdict = {p: X for p in self.expected_model_mat_params_}
 
         # validate:
@@ -351,8 +384,8 @@ class Glm(BaseEstimator):
         """
         Given a model-matrix and output-dim, produce a ``torch.nn.Module`` that predicts a distribution-parameter. The
         default produces a ``torch.nn.Linear`` layer. Additionally, this function returns a dictionary whose keys are
-        param-names and whose values are the names of the individual elements. For the default case, each weight is
-        named according to the column-names in X (if X is a dataframe).
+        param-names and whose values are the names of the individual param-elements. For the default case, each weight
+        is named according to the column-names in X (or "x{i}" if X is not a dataframe).
 
         :param X: A dataframe or ndarray.
         :param output_dim: The number of output dimensions.
@@ -370,16 +403,17 @@ class Glm(BaseEstimator):
             columns = list(X.columns) if hasattr(X, 'columns') else [f'x{i}' for i in range(X.shape[1])]
 
         module_param_names = {'bias': [], 'weight': []}
-        for i in range(output_dim):
-            module_param_names['bias'].append(f'y{i}__bias')
-            module_param_names['weight'].append([f'y{i}__{c}' for c in columns])
+        if output_dim == 1:
+            # for most common case of 1d output, param names are just feature-names
+            module_param_names['bias'].append('bias')
+            module_param_names['weight'].append(columns)
+        else:
+            # if multi-output, we prefix with output idx:
+            for i in range(output_dim):
+                module_param_names['bias'].append(f'y{i}__bias')
+                module_param_names['weight'].append([f'y{i}__{c}' for c in columns])
 
         return module, module_param_names
-
-    @classmethod
-    def penalty_from_module(cls, module: torch.nn.Module, penalty_multi: float) -> torch.Tensor:
-        feature_dist = torch.distributions.Normal(loc=0, scale=1 / penalty_multi ** .5, validate_args=False)
-        return -feature_dist.log_prob(module.weight).sum()
 
     def _init_optimizer(self) -> torch.optim.Optimizer:
         return torch.optim.LBFGS(
@@ -433,19 +467,27 @@ class Glm(BaseEstimator):
         if not self.penalty:
             return torch.zeros(1, **get_to_kwargs(self.module_))
 
+        # standardize to dictionary with param-names:
         if isinstance(self.penalty, dict):
-            penalty_multis = self.penalty
             if set(self.penalty) != set(self.module_.keys()):
                 raise ValueError(
                     f"``self.penalty.keys()`` is {set(self.penalty)}, but expected {set(self.module_.keys())}"
                 )
         else:
-            penalty_multis = {k: self.penalty for k in self.module_.keys()}
+            self.penalty = {k: self.penalty for k in self.module_.keys()}
 
-        to_sum = [torch.tensor(0., **get_to_kwargs(self.module_))]
-        for dp, module in self.module_.items():
+        # standardize to values = callables:
+        for param_name in list(self.penalty):
+            maybe_callable = self.penalty[param_name]
+            if not callable(maybe_callable):
+                # if not callable, it's a multiplier --i.e. L2's 'precision'
+                self.penalty[param_name] = L2(precision=maybe_callable)
+
+        # call each:
+        to_sum = []
+        for param_name, penalty_fun in self.penalty.items():
             to_sum.append(
-                self.penalty_from_module(module, penalty_multi=penalty_multis[dp])
+                penalty_fun(self.module_[param_name], self._module_param_names_[param_name])
             )
         return torch.stack(to_sum).sum()
 
