@@ -10,6 +10,9 @@ class Penalty:
     def __call__(self, module: torch.nn.Module, module_param_names: Dict[str, np.ndarray]) -> torch.Tensor:
         raise NotImplementedError
 
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}()"
+
 
 class L2(Penalty):
     """
@@ -19,6 +22,7 @@ class L2(Penalty):
      gaussian distribution. Can also be a dictionary with names corresponding to feature-names.
     :param mean: See above; the mean of this gaussian (default zero). Can be a dictionary with feature-names.
     """
+
     def __init__(self, precision: Union[float, dict], mean: Union[float, dict] = 0.):
         if not isinstance(mean, dict):
             mean = {'_default': mean}
