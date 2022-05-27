@@ -17,6 +17,7 @@ from foundry.glm.family import Family
 from foundry.glm.family.survival import SurvivalFamily
 from foundry.glm.util import NoWeightModule, Stopping
 from foundry.hessian import hessian
+from foundry.penalty import L2
 from foundry.util import FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d
 
 ModelMatrix = Union[np.ndarray, pd.DataFrame, dict]
@@ -30,10 +31,10 @@ class Glm(BaseEstimator):
     """
     :param family: Either a :class:`foundry.glm.family.Family`, or a string alias. You can see available aliases with
      ``Glm.family_aliases()``.
-    :param penalty: A penalty-multiplier to shrink coefficients. Can be a single float, or a dictionary of these to
+    :param penalty: A multiplier for L2 penalty on coefficients. Can be a single float, or a dictionary of these to
      support different penalties per distribution-parameter. Instead of floats, can also pass functions that take a
      ``torch.nn.Module`` as the first argument and that module's param-names as second argument, and returns a scalar
-     penalty.
+     penalty that will be applied to the log-prob.
     :param predict_params: Many distributions have multiple parameters: for example the normal distribution has a
      location and scale parameter. If a single dataframe/matrix is passed to  ``fit()``, the default behavior is to
      use these to separately predict each of loc/scale. Sometimes this is not desired: for example, we only want to use
@@ -465,7 +466,8 @@ class Glm(BaseEstimator):
         for param_name in list(self.penalty):
             maybe_callable = self.penalty[param_name]
             if not callable(maybe_callable):
-                self.penalty[param_name] = self.penalty_fun_from_multi(maybe_callable)
+                # if not callable, it's a multiplier --i.e. L2's 'precision'
+                self.penalty[param_name] = L2(precision=maybe_callable)
 
         # call each:
         to_sum = []
@@ -474,15 +476,6 @@ class Glm(BaseEstimator):
                 penalty_fun(self.module_[param_name], self._module_param_names_[param_name])
             )
         return torch.stack(to_sum).sum()
-
-    @classmethod
-    def penalty_fun_from_multi(cls, penalty_multi: float) -> callable:
-
-        def fun(module: torch.nn.Module, module_param_names: dict) -> torch.Tensor:
-            feature_dist = torch.distributions.Normal(loc=0, scale=1 / penalty_multi ** .5, validate_args=False)
-            return -feature_dist.log_prob(module.weight).sum()
-
-        return fun
 
     @property
     def coef_dataframe_(self) -> pd.DataFrame:
