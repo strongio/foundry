@@ -1,1 +1,1 @@
-from .sklearn import DataFrameTransformer
+from .sklearn import DataFrameTransformer, InteractionFeatures, as_transformer
