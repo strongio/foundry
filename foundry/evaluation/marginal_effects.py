@@ -60,6 +60,13 @@ class MarginalEffects:
         self._dataframe = None
         self.config = None
 
+    @property
+    def feature_names_in(self) -> Sequence[str]:
+        col_transformer: ColumnTransformer = self.pipeline[0]
+        if not hasattr(col_transformer, '_columns'):
+            raise TypeError("``self.pipeline[0]`` does not have ``_columns``. Is it a ``ColumnTransformer``?")
+        return list(set(sum(col_transformer._columns, [])))
+
     def __call__(self,
                  X: pd.DataFrame,
                  y: Optional[np.ndarray],
@@ -97,17 +104,11 @@ class MarginalEffects:
         orig_colnames = list(X.columns)
         X = X.copy(deep=False)
 
-        # get/validate col-transformer:
-        col_transformer: ColumnTransformer = self.pipeline[0]
-        if not hasattr(col_transformer, '_columns'):
-            raise TypeError("``self.pipeline[0]`` does not have ``_columns``. Is it a ``ColumnTransformer``?")
-        feature_names_in = list(set(sum(col_transformer._columns, [])))
-
         # validate/standardize args:
         vary_features = self._standardize_maybe_binned(X, vary_features)
-        check_set_membership(vary_features, feature_names_in)
+        check_set_membership(vary_features, self.feature_names_in)
         groupby_features = self._standardize_maybe_binned(X, groupby_features)
-        check_set_membership(groupby_features, feature_names_in)
+        check_set_membership(groupby_features, self.feature_names_in)
         assert set(vary_features).isdisjoint(set(groupby_features))
 
         # no-vary features ----
@@ -126,7 +127,7 @@ class MarginalEffects:
             X=X,
             marginalize_aggfun=marginalize_aggfun,
             groupby_colnames=groupby_colnames,
-            colnames_to_agg=list(set(feature_names_in) - set(vary_features))
+            colnames_to_agg=list(set(self.feature_names_in) - set(vary_features))
         )
 
         # vary features ----
@@ -181,7 +182,7 @@ class MarginalEffects:
             del df_me['_dummy']
 
         self.config = {'pred_colnames': []}
-        for col, preds in self.get_predictions(X=X, **predict_kwargs).items():
+        for col, preds in self.get_predictions(X=X.reindex(columns=orig_colnames), **predict_kwargs).items():
             df_me[col] = preds
             self.config['pred_colnames'].append(col)
 
