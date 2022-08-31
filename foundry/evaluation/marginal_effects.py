@@ -74,7 +74,7 @@ class MarginalEffects:
                  groupby_features: Collection[Union[str, Binned]] = (),
                  vary_features_aggfun: Union[str, dict, Callable] = 'mean',
                  marginalize_aggfun: Union[str, dict, Callable, None] = 'mean',
-                 y_aggfun: str = 'mean',
+                 y_aggfun: Union[str, Callable] = 'mean',
                  **predict_kwargs) -> 'MarginalEffects':
         """
         Prepare a dataframe/plot showing how predictions vary when one or more features are varied, holding
@@ -182,7 +182,7 @@ class MarginalEffects:
             del df_me['_dummy']
 
         self.config = {'pred_colnames': []}
-        for col, preds in self.get_predictions(X=X.reindex(columns=orig_colnames), **predict_kwargs).items():
+        for col, preds in self.get_predictions(X=df_me.reindex(columns=orig_colnames), **predict_kwargs).items():
             df_me[col] = preds
             self.config['pred_colnames'].append(col)
 
