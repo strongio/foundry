@@ -170,18 +170,37 @@ class ToSliceDict(TransformerMixin, BaseEstimator):
             else:
                 self.mapping = {k: _get_col_names_or_idx(X) for k in self.mapping}
 
-        if isinstance(self.mapping, dict):
-            for k in list(self.mapping):
-                thisX = X[k] if isinstance(X, dict) else X
-                if callable(self.mapping[k]):
-                    self.mapping[k] = list(self.mapping[k](thisX))
-                    if not self.mapping[k]:
-                        raise RuntimeError(f"self.mapping['{k}'] is a callable that returned no columns.")
-                elif isinstance(self.mapping[k], str):
-                    raise ValueError(f"mapping (for {k}) is a string not a list-- did you mean to wrap in []?")
+        if not isinstance(self.mapping, dict):
+            raise ValueError("`mapping` must be a list, tuple or dict.")
+
+        remainder_name = None
+        for k in list(self.mapping):
+            thisX = X[k] if isinstance(X, dict) else X
+            if callable(self.mapping[k]):
+                self.mapping[k] = list(self.mapping[k](thisX))
+                if not self.mapping[k]:
+                    raise RuntimeError(f"self.mapping['{k}'] is a callable that returned no columns.")
+            elif isinstance(self.mapping[k], str):
+                if self.mapping[k] == 'remainder':
+                    if remainder_name is not None:
+                        raise RuntimeError("Only one element of mapping can be 'remainder'.")
+                    remainder_name = k
                 else:
-                    # will raise if missing
-                    _select_col_names_or_idx(thisX, self.mapping[k])
+                    raise ValueError(f"mapping (for {k}) is a string not a list-- did you mean to wrap in []?")
+            else:
+                # will raise if missing
+                _select_col_names_or_idx(thisX, self.mapping[k])
+
+        if remainder_name:
+            if isinstance(X, dict):
+                raise RuntimeError("Cannot set any values of `mapping` to 'remainder' if X is a dict.")
+            # one and only one of the selections can be the literal 'remainder': everything not selected by the others
+            remainder = set(X.columns)
+            for k, selection in self.mapping.items():
+                if k == remainder_name:
+                    continue
+                remainder = remainder - set(selection)
+            self.mapping[remainder_name] = list(remainder)
 
         return self
 

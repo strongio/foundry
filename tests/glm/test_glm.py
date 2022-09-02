@@ -184,6 +184,18 @@ class TestBuildModelMats:
                                 for k in ['param1', 'param2']},
                 expected_ydict={'value': torch.ones((5, 2)), 'weight': torch.ones((5, 1))}
             ),
+            Params(
+                description="Using 'remainder',",
+                mm_params={'param1': ['x1'], 'param2': 'remainder'},
+                X=pd.DataFrame({'x1': np.arange(5), 'x2': -np.arange(5)}),
+                y=np.ones(5),
+                sample_weight=None,
+                expected_xdict={
+                    'param1': to_2d(torch.arange(5.)),
+                    'param2': -to_2d(torch.arange(5.))
+                },
+                expected_ydict={'value': torch.ones(5, 1), 'weight': torch.ones((5, 1))}
+            ),
         ]
     )
     def setup(self, glm: Glm, request: 'FixtureRequest') -> Fixture:
@@ -275,7 +287,7 @@ class TestInit_Module:
                    'parmesian': pd.DataFrame({'x1': [1, 2, 3], 'x2': [3, 2, 1]})},
                 y=np.ones(3),
                 expected_result=torch.nn.ModuleDict({
-                    'param1':  torch.nn.Linear(2, 1),
+                    'param1': torch.nn.Linear(2, 1),
                     'param2': NoWeightModule(1)
                 }),
                 # no exception for invalid params in init_module, these come later, since we want to allow pass-thru
