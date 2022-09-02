@@ -16,7 +16,7 @@ class Family:
     aliases = {
         'binomial': (
             distributions.Binomial,
-            {'probs': transforms.SigmoidTransform()}  # TODO: support total_count?
+            {'probs': transforms.SigmoidTransform()},
         ),
         'poisson': (
             distributions.Poisson,
@@ -37,6 +37,13 @@ class Family:
             {
                 'scale': transforms.ExpTransform(),
                 'concentration': transforms.ExpTransform()
+            }
+        ),
+        'gaussian': (
+            torch.distributions.Normal,
+            {
+                'loc': transforms.identity_transform,
+                'scale': transforms.ExpTransform()
             }
         )
     }
