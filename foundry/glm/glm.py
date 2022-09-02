@@ -536,14 +536,6 @@ class Glm(BaseEstimator):
 
         x_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
         log_prob = self.get_log_prob(x_dict=x_dict, lp_dict=lp_dict, mean=False)
-        hess = hessian(output=-log_prob, inputs=all_params, allow_unused=True, progress=False)
+        hess = hessian(output=-log_prob.squeeze(), inputs=all_params, allow_unused=True, progress=False)
 
         return all_param_names, means, hess
-
-
-def _select_df_or_array(x, cols):
-    # todo: probably a better way to do this
-    if hasattr(x, 'columns'):
-        return x.loc[:, cols]
-    else:
-        return x[:, cols]
