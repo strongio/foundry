@@ -177,6 +177,8 @@ class ToSliceDict(TransformerMixin, BaseEstimator):
                     self.mapping[k] = list(self.mapping[k](thisX))
                     if not self.mapping[k]:
                         raise RuntimeError(f"self.mapping['{k}'] is a callable that returned no columns.")
+                elif isinstance(self.mapping[k], str):
+                    raise ValueError(f"mapping (for {k}) is a string not a list-- did you mean to wrap in []?")
                 else:
                     # will raise if missing
                     _select_col_names_or_idx(thisX, self.mapping[k])
