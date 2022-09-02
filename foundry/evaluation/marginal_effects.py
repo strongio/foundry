@@ -343,6 +343,9 @@ class MarginalEffects:
             for key in keys:
                 if key not in deffy_dict:
                     deffy_dict[key] = default
+            extra = set(deffy_dict) - set(keys)
+            if extra:
+                warn(f"Unexpected keys: `{extra}`")
         else:
             deffy_dict = {key: maybe_dict for key in keys}
         return deffy_dict
