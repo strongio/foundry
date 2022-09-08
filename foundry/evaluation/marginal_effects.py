@@ -188,7 +188,7 @@ class MarginalEffects:
         for binned_fname, df_mapping in vary_features_mappings.items():
             if df_mapping is None:  # binned_fname==fname, i.e. feature was already categorical
                 continue
-            df_vary_grid = df_vary_grid.merge(df_mapping, on=binned_fname).drop(columns=[binned_fname])
+            df_vary_grid = df_vary_grid.merge(df_mapping, on=binned_fname)
 
         self.config = {'pred_colnames': []}
         if marginalize_aggfun:
@@ -275,6 +275,8 @@ class MarginalEffects:
         aes_kwargs['x'] = x
         if not color and available_default_features:
             color = available_default_features.pop(0)
+            if color + '_binned' in self._dataframe.columns:
+                color += '_binned'
         if color:
             aes_kwargs['group'] = aes_kwargs['color'] = color
         if available_default_features:
