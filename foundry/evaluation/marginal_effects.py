@@ -125,7 +125,6 @@ class MarginalEffects:
         vary_features = self._standardize_maybe_binned(X, vary_features)
         check_set_membership(vary_features, self.feature_names_in)
         groupby_features = self._standardize_maybe_binned(X, groupby_features)
-        check_set_membership(groupby_features, self.feature_names_in)
         assert set(vary_features).isdisjoint(set(groupby_features))
 
         # no-vary features ----
