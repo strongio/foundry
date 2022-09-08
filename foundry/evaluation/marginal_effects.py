@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Collection, Dict, Optional, Iterable, Tuple
 from warnings import warn
 
@@ -7,6 +8,8 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 
 from typing import Callable, Sequence, Union
+
+from tqdm.auto import tqdm
 
 
 class Binned:
@@ -62,10 +65,25 @@ class MarginalEffects:
 
     @property
     def feature_names_in(self) -> Sequence[str]:
+        """
+        The actual features passed to the ColumnTransformer.
+        """
         col_transformer: ColumnTransformer = self.pipeline[0]
         if not hasattr(col_transformer, '_columns'):
             raise TypeError("``self.pipeline[0]`` does not have ``_columns``. Is it a ``ColumnTransformer``?")
+        if col_transformer.remainder != 'drop':
+            raise NotImplementedError("Not currently implemented if ``col_transformer.remainder != 'drop'``")
         return list(set(sum(col_transformer._columns, [])))
+
+    @property
+    def all_column_names_in(self) -> Sequence[str]:
+        """
+        The original columns passed to the ColumnTransformer.
+        """
+        col_transformer: ColumnTransformer = self.pipeline[0]
+        if not hasattr(col_transformer, 'feature_names_in_'):
+            raise TypeError("``self.pipeline[0]`` does not have ``feature_names_in_``. Is it a ``ColumnTransformer``?")
+        return col_transformer.feature_names_in_
 
     def __call__(self,
                  X: pd.DataFrame,
@@ -89,19 +107,18 @@ class MarginalEffects:
          effects per segment. By default will be binned by passing to :function:`foundry.evaluation.binned`. You can
          pass to this function yourself to manually control/remove binning.
         :param vary_features_aggfun: The varying feature(s) will be binned, then within each bin we need to convert
-         back to numeric before plugging into the model. This string indicates how to do so. Either an aggregation that
-         will be applied, or 'mid' to use the midpoint of the bin. The latter will be used regardless when no actual
-         data exists in that bin. This argument can also be a dictionary with keys being feature-names.
+         back to numeric before plugging into the model. This string indicates how to do so (default: mean). Either an
+         aggregation that will be applied, or 'mid' to use the midpoint of the bin. The latter will be used regardless
+         when no actual data exists in that bin. This argument can also be a dictionary with keys being feature-names.
         :param marginalize_aggfun: How to marginalize across features that are not in the vary/groupby. This is a
-         string/callable that will be applied to each feature. Can also use a dictionary of these, with keys being
-         feature-names. If set to False/None, will *not* collapse these, but instead call ``predict`` for each
-         row then summarize the *predictions* with `y_aggfun`. WARNING: this will be slow for a large dataset,
+         string/callable that will be applied to each feature. Default: median. Can also use a dictionary of these,
+         with keys being feature-names. If set to False/None, will *not* collapse these, but instead call ``predict``
+         for each row then summarize the *predictions* with `y_aggfun`. WARNING: this will be slow for a large dataset,
          downsampling recommended.
         :param y_aggfun: The function to use when aggregating predictions (and actuals, if supplied). Only has an
          effect if ``marginalize_aggfun` is False/None.
         :param predict_kwargs: Keyword-arguments to pass to the pipeline's ``predict`` method.
         """
-        orig_colnames = list(X.columns)
         X = X.copy(deep=False)
 
         # validate/standardize args:
@@ -131,10 +148,11 @@ class MarginalEffects:
         )
 
         # vary features ----
+        default = vary_features_aggfun.pop('_default', 'mean') if isinstance(vary_features_aggfun, dict) else 'mean'
         vary_features_aggfuns = self._standardize_maybe_dict(
             maybe_dict=vary_features_aggfun,
             keys=vary_features,
-            default=vary_features_aggfun.pop('_default', 'mean') if isinstance(vary_features_aggfun, dict) else 'mean'
+            default=default
         )
         # get mappings of binned(vary_feature) -> agg(vary_feature)
         # the former is needed so we don't drop bins with no actual observations
@@ -172,19 +190,41 @@ class MarginalEffects:
                 continue
             df_vary_grid = df_vary_grid.merge(df_mapping, on=binned_fname).drop(columns=[binned_fname])
 
-        # merge
+        self.config = {'pred_colnames': []}
         if marginalize_aggfun:
             df_me = df_vary_grid.merge(df_no_vary, how='left', on=groupby_colnames)
+            for col, preds in self.get_predictions(X=df_me, **predict_kwargs).items():
+                df_me[col] = preds
+                self.config['pred_colnames'].append(col)
         else:
-            raise NotImplementedError("TODO")
+            pred_colnames = set()
+            if df_no_vary.shape[0] > 100_000:
+                warn("Number of records is large, and `marginalize_aggfun` is not set -- this might be slow.")
+
+            chunks = [df for _, df in df_vary_grid.groupby(list(vary_features), sort=False)]
+
+            df_me = []
+            for _df_vary_chunk in tqdm(chunks, delay=10):
+
+                _df_merged = _df_vary_chunk.merge(df_no_vary, how='left', on=groupby_colnames)
+                for col, preds in self.get_predictions(X=_df_merged, **predict_kwargs).items():
+                    _df_merged[col] = preds
+                    pred_colnames.add(col)
+
+                _df_collapsed = (_df_merged
+                                 .groupby(groupby_colnames + list(vary_features))
+                                 .agg(**{k: (k, y_aggfun) for k in pred_colnames})
+                                 .reset_index())
+
+                # pandas silently drops nan groupbys, so even though one-row-per-actual, can't groupby actual
+                df_me.append(_df_collapsed.merge(_df_vary_chunk, on=groupby_colnames + list(vary_features)))
+
+            df_me = pd.concat(df_me).reset_index(drop=True)
+            self.config['pred_colnames'] = list(pred_colnames)
+
         df_me['n'].fillna(0, inplace=True)
         if '_dummy' in df_me.columns:
             del df_me['_dummy']
-
-        self.config = {'pred_colnames': []}
-        for col, preds in self.get_predictions(X=df_me.reindex(columns=orig_colnames), **predict_kwargs).items():
-            df_me[col] = preds
-            self.config['pred_colnames'].append(col)
 
         self._dataframe = df_me
         self.config.update({
@@ -201,10 +241,11 @@ class MarginalEffects:
     def plot(self,
              x: Optional[str] = None,
              color: Optional[str] = None,
-             facets: Optional[Sequence[str]] = None) -> 'ggplot':
+             facets: Optional[Sequence[str]] = None,
+             include_actuals: Optional[bool] = None) -> 'ggplot':
 
         try:
-            from plotnine import ggplot, aes, geom_line, geom_hline, facet_wrap, theme, theme_bw
+            from plotnine import ggplot, aes, geom_line, geom_hline, facet_wrap, theme, theme_bw, geom_point
         except ImportError as e:
             raise RuntimeError("plotting requires `plotnine` package") from e
         facets = facets or []
@@ -250,8 +291,14 @@ class MarginalEffects:
                 theme_bw() +
                 theme(figure_size=(8, 6), subplots_adjust={'wspace': 0.10})
         )
-        if 'actual' in self._dataframe.columns:
-            raise NotImplementedError("TODO")
+        if include_actuals is None:
+            include_actuals = 'actual' in self._dataframe.columns
+        if include_actuals:
+            if 'actual' in self._dataframe.columns:
+                plot += geom_point(aes(y='actual', size='n'))
+            else:
+                raise RuntimeError("`y` was not passed so cannot include_actuals")
+
         if facets:
             plot += facet_wrap(facets, scales='free_y')
         return plot
@@ -273,6 +320,9 @@ class MarginalEffects:
             yield fname, binned_fname, binned_feature
 
     def get_predictions(self, X: pd.DataFrame, **kwargs) -> Dict[str, np.ndarray]:
+        # avoid warning from ColumnTransformer:
+        X = X.reindex(columns=self.all_column_names_in)
+
         # pipeline doesn't let us forward any methods aside from predict{_proba}, so we split:
         prep_steps_, estimator_ = self.pipeline[0:-1], self.pipeline[-1]
 
@@ -383,10 +433,11 @@ class MarginalEffects:
         groupby_colnames.
         """
         if marginalize_aggfun:
+            default = marginalize_aggfun.pop('_default', 'median') if isinstance(marginalize_aggfun, dict) else 'median'
             marginalize_aggfuns = self._standardize_maybe_dict(
                 maybe_dict=marginalize_aggfun,
                 keys=colnames_to_agg,
-                default=marginalize_aggfun.pop('_default', 'mean') if isinstance(marginalize_aggfun, dict) else 'mean'
+                default=default
             )
             agg_kwargs = {}
             for feature in colnames_to_agg:
