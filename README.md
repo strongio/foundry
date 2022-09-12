@@ -60,3 +60,11 @@ setup(
   ```
 
 
+## Usage
+### Marginal Effects
+_An Illustrative Example_:
+Suppose we are modelling the wave height at Waimea Bay. There are a number of features, including wave heights at a neighboring beach, air-temperature, humidity, and air pressure. We might want to visualize the estimated effect that temperature has on wave height. Furthermore, we might want to see how temperature affects wave height conditional on wave heights at a neighboring beach. 
+
+`foundry.evaluation.MarginalEffects` allows us to do just that! 
+
+TODO: User guide. 
