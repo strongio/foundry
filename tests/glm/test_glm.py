@@ -13,7 +13,7 @@ from torch.distributions import constraints, identity_transform
 from foundry.glm.family import Family
 from foundry.glm.glm import ModelMatrix, Glm
 from foundry.glm.util import NoWeightModule
-from foundry.util import to_2d
+from foundry.util import to_2d, ToSliceDict
 from tests.util import assert_dict_of_tensors_equal, assert_scalars_equal
 
 
@@ -29,7 +29,7 @@ class _FakeDist:
 
 
 @pytest.fixture()
-def family() -> Family:
+def fake_family() -> Family:
     return Family(
         distribution_cls=_FakeDist,
         params_and_links={k: identity_transform for k in _FakeDist.arg_constraints}
@@ -38,8 +38,8 @@ def family() -> Family:
 
 class TestBuildModelMats:
     @pytest.fixture()
-    def glm(self, family: Family):
-        glm = Glm(family=family)
+    def glm(self, fake_family: Family):
+        glm = Glm(family=fake_family)
 
         # module is used to determine dtype/device:
         glm.module_ = Mock(spec_set=['dtype', 'device'])
@@ -95,7 +95,7 @@ class TestBuildModelMats:
                 X={k: np.array([-np.arange(5), np.arange(5.)]).T for k in ['param1', 'parmesian']},
                 y=np.arange(5.),
                 sample_weight=None,
-                expected_exception=ValueError
+                expected_exception=RuntimeError
             ),
             Params(
                 description="Pass X as dataframe, pass y as dict of dataframes w/extra key",
@@ -184,17 +184,28 @@ class TestBuildModelMats:
                                 for k in ['param1', 'param2']},
                 expected_ydict={'value': torch.ones((5, 2)), 'weight': torch.ones((5, 1))}
             ),
+            Params(
+                description="Using 'remainder',",
+                mm_params={'param1': ['x1'], 'param2': 'remainder'},
+                X=pd.DataFrame({'x1': np.arange(5), 'x2': -np.arange(5)}),
+                y=np.ones(5),
+                sample_weight=None,
+                expected_xdict={
+                    'param1': to_2d(torch.arange(5.)),
+                    'param2': -to_2d(torch.arange(5.))
+                },
+                expected_ydict={'value': torch.ones(5, 1), 'weight': torch.ones((5, 1))}
+            ),
         ]
     )
-    @patch('foundry.glm.glm.Glm.expected_model_mat_params_', new_callable=PropertyMock)
-    def setup(self, mock_expected_model_mat_params_: PropertyMock, glm: Glm, request: 'FixtureRequest') -> Fixture:
-        # this would be set when initializing the module:
-        mock_expected_model_mat_params_.return_value = request.param.mm_params
+    def setup(self, glm: Glm, request: 'FixtureRequest') -> Fixture:
 
         # call, capturing exceptions if they're expected:
         exception = None
         xdict, ydict = None, None
         try:
+            # this would be set in _init_module
+            glm.to_slice_dict_ = ToSliceDict(request.param.mm_params).fit(request.param.X)
             xdict, ydict = glm._build_model_mats(
                 X=request.param.X,
                 y=request.param.y,
@@ -230,9 +241,9 @@ class TestBuildModelMats:
 
 class TestInit_Module:
     @pytest.fixture()
-    def glm(self, family: Family):
+    def glm(self, fake_family: Family):
         # todo: we're not mocking module_factory, so more of an integration test.
-        return Glm(family=family)
+        return Glm(family=fake_family)
 
     Params = namedtuple('Params', ['description', 'X', 'y', 'expected_result', 'expected_exception'])
 
@@ -246,7 +257,7 @@ class TestInit_Module:
                 y=[1, 2, 3],
                 expected_result=torch.nn.ModuleDict({
                     'param1': torch.nn.Linear(2, 1),
-                    'param2': torch.nn.Linear(2, 1)
+                    'param2': NoWeightModule(1)
                 }),
                 expected_exception=None
             ),
@@ -275,8 +286,13 @@ class TestInit_Module:
                 X={'param1': pd.DataFrame({'x1': [1, 2, 3], 'x2': [3, 2, 1]}),
                    'parmesian': pd.DataFrame({'x1': [1, 2, 3], 'x2': [3, 2, 1]})},
                 y=np.ones(3),
-                expected_result=None,
-                expected_exception=ValueError
+                expected_result=torch.nn.ModuleDict({
+                    'param1': torch.nn.Linear(2, 1),
+                    'param2': NoWeightModule(1)
+                }),
+                # no exception for invalid params in init_module, these come later, since we want to allow pass-thru
+                # arguments to the distribution (e.g. total_count) for binomial)
+                expected_exception=None
             )
         ]
     )
@@ -290,8 +306,6 @@ class TestInit_Module:
         """
         Test that _init_module calls the `module_factory`, handling x and y shapes properly.
         """
-        with pytest.raises(NotFittedError):
-            assert glm.expected_model_mat_params_
 
         if expected_exception:
             with pytest.raises(expected_exception):
@@ -302,9 +316,9 @@ class TestInit_Module:
             expected_result_sd_shapes = {k: v.shape for k, v in expected_result.state_dict().items()}
             assert result_sd_shapes == expected_result_sd_shapes
             if isinstance(X, dict):
-                assert glm.expected_model_mat_params_ == list(X.keys())
+                assert list(glm.to_slice_dict_.mapping) == list(X.keys())
             else:
-                assert glm.expected_model_mat_params_ == glm.family.params
+                assert list(glm.to_slice_dict_.mapping) == [glm.family.params[0]]
 
 
 def test_predict():
@@ -344,16 +358,16 @@ def test_log_prob(value: torch.Tensor,
                   weight: Optional[torch.Tensor],
                   penalty: float,
                   expected_lp: torch.Tensor,
-                  family: Family):
+                  fake_family: Family):
     """
     Test that family.log_prob and _get_penalty are called, and that increasing the penalty decreases the log prob.
     """
     # init glm:
-    glm = Glm(family=family, penalty=penalty)
+    glm = Glm(family=fake_family, penalty=penalty, col_mapping=[])
 
     # mock family.log_prob
-    family.log_prob = Mock(autospec=family.log_prob)
-    family.log_prob.side_effect = lambda distribution, value, weight: -value * weight
+    fake_family.log_prob = Mock(autospec=fake_family.log_prob)
+    fake_family.log_prob.side_effect = lambda distribution, value, weight: -value * weight
 
     # mock penalty:
     glm._get_penalty = Mock(autospec=glm._get_penalty)
@@ -370,7 +384,7 @@ def test_log_prob(value: torch.Tensor,
     lp = glm.get_log_prob(mm_dict, lp_dict)
 
     # should have called family.log_prob:
-    family.log_prob.assert_called()
+    fake_family.log_prob.assert_called()
 
     # log-prob should match expectation:
     assert_scalars_equal(lp, expected_lp)

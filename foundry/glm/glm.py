@@ -18,9 +18,9 @@ from foundry.glm.family.survival import SurvivalFamily
 from foundry.glm.util import NoWeightModule, Stopping
 from foundry.hessian import hessian
 from foundry.penalty import L2
-from foundry.util import FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d
-
-ModelMatrix = Union[np.ndarray, pd.DataFrame, dict]
+from foundry.util import (
+    FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d, is_array, ModelMatrix, ToSliceDict
+)
 
 N_FIT_RETRIES = int(os.getenv('GLM_N_FIT_RETRIES', 10))
 
@@ -31,31 +31,34 @@ class Glm(BaseEstimator):
     """
     :param family: Either a :class:`foundry.glm.family.Family`, or a string alias. You can see available aliases with
      ``Glm.family_aliases()``.
-    :param penalty: A multiplier for L2 penalty on coefficients. Can be a single float, or a dictionary of these to
-     support different penalties per distribution-parameter. Instead of floats, can also pass functions that take a
-     ``torch.nn.Module`` as the first argument and that module's param-names as second argument, and returns a scalar
+    :param penalty: A multiplier for L2 penalty on coefficients. Can be a single value, or a dictionary of these to
+     support different penalties per distribution-parameter. Values can either be floats, or can be functions that take
+     a ``torch.nn.Module`` as the first argument and that module's param-names as second argument, and returns a scalar
      penalty that will be applied to the log-prob.
-    :param predict_params: Many distributions have multiple parameters: for example the normal distribution has a
-     location and scale parameter. If a single dataframe/matrix is passed to  ``fit()``, the default behavior is to
-     use these to separately predict each of loc/scale. Sometimes this is not desired: for example, we only want to use
-     predictors to predict the location, and the scale should be 'intercept only'. This can be accomplished with
-     `predict_params=['loc']` (replacing 'loc' with the relevant name(s) for your distribution of interest). For finer-
-     grained control (e.g. using some predictors for some params and others for others), see options about passing a
-     dictionary to ``fit()``.
+    :param col_mapping: Many distributions have multiple parameters: for example the normal distribution has a
+     location and scale parameter. If a single dataframe/matrix is passed to  :class:`foundry.glm.Glm.fit`, the default
+     behavior is to use this to predict the *first* parameter (e.g. loc) while other parameters (e.g. scale) have no
+     predictors (i.e. are "intercept-only"). Sometimes this is not desired: for example, we want to use predictors to
+     predict both. This can be either a list or a dictionary. For example, ``col_mapping=['loc','scale']`` will create a
+      dict with the full model-matrix assigned to both params. A dictionary allows finer-grained control, e.g.:
+     ``col_mapping={'loc':[col1,col2,col3],'scale':[col1]}``. Finally, instead of the dict-values being lists of
+     columns, these can be functions that takes the data and return the relevant columns: e.g.
+     ``col_mapping={'loc':sklearn.compose.make_column_selector('^col+.'), 'scale':[col1]}``.
     """
 
     def __init__(self,
                  family: Union[str, Family],
                  penalty: Union[float, Sequence[float], Dict[str, float]] = 0.,
-                 predict_params: Optional[Sequence[str]] = None):
+                 col_mapping: Union[list, dict, None] = None):
 
         self.family = family
         self.penalty = penalty
-        self.predict_params = predict_params
+        self.col_mapping = col_mapping
 
         # set in _init_module:
         self._module_ = None
         self._module_param_names_ = None
+        self.to_slice_dict_ = None
 
         # laplace params:
         self._coef_mvnorm_ = None
@@ -74,10 +77,6 @@ class Glm(BaseEstimator):
     @module_.setter
     def module_(self, value: torch.nn.ModuleDict):
         self._module_ = value
-
-    @property
-    def expected_model_mat_params_(self) -> Sequence[str]:
-        return [p for p, m in self.module_.items() if not isinstance(m, NoWeightModule)]
 
     def fit(self,
             X: ModelMatrix,
@@ -156,6 +155,7 @@ class Glm(BaseEstimator):
         if self._module_ is None or reset:
             if self._module_ is not None and verbose:
                 warn("Resetting module with reset=True")
+            # initialize module:
             self.module_ = self._init_module(X, y)
 
         # optimizer:
@@ -171,7 +171,7 @@ class Glm(BaseEstimator):
             stopping.optimizer = self.optimizer_
 
         # build model-mats:
-        mm_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
+        x_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
 
         # progress bar:
         prog = None
@@ -183,7 +183,7 @@ class Glm(BaseEstimator):
 
         def closure():
             self.optimizer_.zero_grad()
-            loss = -self.get_log_prob(mm_dict, lp_dict)
+            loss = -self.get_log_prob(x_dict, lp_dict)
             if is_invalid(loss):
                 self._fit_failed += 1
                 raise FitFailedException("`nan`/`inf` loss")
@@ -231,11 +231,11 @@ class Glm(BaseEstimator):
 
         return self
 
-    def get_log_prob(self, mm_dict: dict, lp_dict: dict, mean: bool = True) -> torch.Tensor:
+    def get_log_prob(self, x_dict: dict, lp_dict: dict, mean: bool = True) -> torch.Tensor:
         """
         Get the penalized log prob, applying weights as needed.
         """
-        log_probs = self.family.log_prob(self.family(**self._get_dist_kwargs(**mm_dict)), **lp_dict)
+        log_probs = self.family.log_prob(self.family(**self._get_dist_kwargs(**x_dict)), **lp_dict)
         penalty = self._get_penalty()
         log_prob = log_probs.sum() - penalty
         if mean:
@@ -244,46 +244,35 @@ class Glm(BaseEstimator):
 
     def _get_dist_kwargs(self, **kwargs) -> dict:
         """
-        Call each entry in the module_ dict to get predicted family params.
+        Call each entry in the module_ dict to get predicted family params. Any leftover keywords are passed as-is.
         """
         out = {}
-        for dp in self.module_:
-            if dp in self.expected_model_mat_params_:
-                out[dp] = self.module_[dp](kwargs.pop(dp))
+        for dp, dp_module in self.module_.items():
+            if isinstance(dp_module, NoWeightModule):
+                if dp in kwargs:
+                    raise RuntimeError(f"When fitted, no predictors were passed for {dp}, so can't pass them now.")
+                out[dp] = dp_module()
             else:
-                out[dp] = self.module_[dp](kwargs.get(dp, None))
-        if kwargs:
-            warn(f"Unrecognized kwargs to `_get_dist_kwargs()`: {set(kwargs)}")
+                out[dp] = dp_module(kwargs.pop(dp))
+        out.update(kwargs)  # remaining are passthru
         return out
 
     def _get_xdict(self, X: ModelMatrix) -> Dict[str, torch.Tensor]:
         _to_kwargs = get_to_kwargs(self.module_)
 
-        # convert to dict:
-        if isinstance(X, dict):
-            Xdict = X.copy()
-        else:
-            # TODO: if originally passed a dict but are now passing a dataframe, this will lead to cryptic errors later
-            Xdict = {p: X for p in self.expected_model_mat_params_}
-
-        # validate:
-        if set(Xdict) != set(self.expected_model_mat_params_):
-            raise ValueError(
-                f"X has keys {set(Xdict)} but (from prev. call to fit()), was "
-                f"expecting {self.expected_model_mat_params_}"
-            )
+        Xdict = self.to_slice_dict_.transform(X)
 
         # convert to tensors:
-        x_len = None
-        for nm in self.expected_model_mat_params_:
-            Xdict[nm] = to_tensor(Xdict[nm], **_to_kwargs)
-            assert len(Xdict[nm].shape) == 2, f"len(X['{nm}'].shape)!=2"
-            if x_len is None:
-                x_len = Xdict[nm].shape[0]
-            elif x_len != Xdict[nm].shape[0]:
-                raise ValueError("Not all X entries have same shape[0]")
-            if is_invalid(Xdict[nm]):
-                raise ValueError(f"nans/infs in X ({nm})")
+        for nm in list(Xdict):
+            if is_array(Xdict[nm]):
+                Xdict[nm] = to_tensor(Xdict[nm], **_to_kwargs)
+
+            if nm in self.family.params:
+                # model-mat params
+                assert len(Xdict[nm].shape) == 2, f"len(X['{nm}'].shape)!=2"
+                if is_invalid(Xdict[nm]):
+                    raise ValueError(f"nans/infs in X ({nm})")
+
         return Xdict
 
     def _get_ydict(self, y: ModelMatrix, sample_weight: Optional[np.ndarray]) -> Dict[str, torch.Tensor]:
@@ -298,7 +287,7 @@ class Glm(BaseEstimator):
         if 'weight' in ydict:
             if sample_weight is not None:
                 raise ValueError("Please pass either `sample_weight` or y=dict(weight=), but not both.")
-        else:
+        elif sample_weight is not None:
             ydict['weight'] = sample_weight
 
         if ydict.get('weight', None) is None:
@@ -351,12 +340,14 @@ class Glm(BaseEstimator):
         return Xdict, ydict
 
     def _init_module(self, X: ModelMatrix, y: ModelMatrix) -> torch.nn.ModuleDict:
-
-        if isinstance(X, dict):
-            if not set(X.keys()).issubset(set(self.family.params)):
-                raise ValueError(f"X should be a subset of {self.family.params}")
-        else:
-            X = {dp: X for dp in self.predict_params or self.family.params}
+        # memorize the col -> dist-param mapping
+        col_mapping = self.col_mapping
+        if col_mapping is None and not isinstance(X, dict):
+            # if col_mapping is None and they didn't pass a dict for X, default is use first family param
+            # otherwise use col_mapping as-is (if X is a dict, will be used by ToSliceDict)
+            col_mapping = [self.family.params[0]]
+        self.to_slice_dict_ = ToSliceDict(mapping=col_mapping)
+        X = self.to_slice_dict_.fit_transform(X)
 
         if isinstance(y, dict):
             y = y['value']
@@ -445,15 +436,15 @@ class Glm(BaseEstimator):
         :param kwargs: Keyword arguments to pass if ``type`` is callable. See ``kwargs_as_is``.
         :return: A ndarray of predictions.
         """
-        Xdict, *_ = self._build_model_mats(X=X, y=None)
-        dist_kwargs = self._get_dist_kwargs(**Xdict)
+        x_dict, *_ = self._build_model_mats(X=X, y=None)
+        dist_kwargs = self._get_dist_kwargs(**x_dict)
         dist = self.family(**dist_kwargs)
         result = getattr(dist, type)
         if callable(result):
             if not isinstance(kwargs_as_is, dict):
                 kwargs_as_is = {k: kwargs_as_is for k in kwargs}
             for k in list(kwargs):
-                if not kwargs_as_is.get(k, False) and isinstance(kwargs[k], (torch.Tensor, np.ndarray, pd.Series)):
+                if not kwargs_as_is.get(k, False) and is_array(kwargs[k]):
                     kwargs[k] = to_2d(to_tensor(kwargs[k], **get_to_kwargs(self.module_)))
             result = result(**kwargs)
         elif kwargs:
@@ -490,6 +481,8 @@ class Glm(BaseEstimator):
                 penalty_fun(self.module_[param_name], self._module_param_names_[param_name])
             )
         return torch.stack(to_sum).sum()
+
+    # TODO: predict_proba, predict_log_proba
 
     @property
     def coef_dataframe_(self) -> pd.DataFrame:
@@ -541,8 +534,8 @@ class Glm(BaseEstimator):
                 all_params.append(param_values)  # TODO: any way to assert reshape(-1) matches internals of hessian?
         means = torch.cat([p.reshape(-1) for p in all_params])
 
-        mm_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
-        log_prob = self.get_log_prob(mm_dict=mm_dict, lp_dict=lp_dict, mean=False)
-        hess = hessian(output=-log_prob, inputs=all_params, allow_unused=True, progress=False)
+        x_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
+        log_prob = self.get_log_prob(x_dict=x_dict, lp_dict=lp_dict, mean=False)
+        hess = hessian(output=-log_prob.squeeze(), inputs=all_params, allow_unused=True, progress=False)
 
         return all_param_names, means, hess

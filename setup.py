@@ -13,6 +13,7 @@ setuptools.setup(
         'torch>=1.9',
         'tqdm',
         'scikit-learn>=1.0',
+        'scipy>=1.7.*',
         'tenacity==8.0.*'
     ],
     python_requires='>=3.7',
