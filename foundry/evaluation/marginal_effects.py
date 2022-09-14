@@ -1,4 +1,3 @@
-from collections import defaultdict
 from typing import Collection, Dict, Optional, Iterable, Tuple
 from warnings import warn
 
@@ -57,11 +56,12 @@ def raw(col: str) -> Callable:
 
 
 class MarginalEffects:
-    def __init__(self, pipeline: Pipeline, predict_method: Optional[str] = None):
+    def __init__(self, pipeline: Pipeline, predict_method: Optional[str] = None, quiet: bool = False):
         self.pipeline = pipeline
         self.predict_method = predict_method
         self._dataframe = None
         self.config = None
+        self.quiet = quiet
 
     @property
     def feature_names_in(self) -> Sequence[str]:
@@ -197,13 +197,15 @@ class MarginalEffects:
                 self.config['pred_colnames'].append(col)
         else:
             pred_colnames = set()
-            if df_no_vary.shape[0] > 100_000:
-                warn("Number of records is large, and `marginalize_aggfun` is not set -- this might be slow.")
+            if df_no_vary.shape[0] > 100_000 and not self.quiet:
+                print("Consider setting `marginalize_aggfun` or downsampling data.")
 
             chunks = [df for _, df in df_vary_grid.groupby(list(vary_features), sort=False)]
+            if not self.quiet:
+                chunks = tqdm(chunks, delay=10)
 
             df_me = []
-            for _df_vary_chunk in tqdm(chunks, delay=10):
+            for _df_vary_chunk in chunks:
 
                 _df_merged = _df_vary_chunk.merge(df_no_vary, how='left', on=groupby_colnames)
                 for col, preds in self.get_predictions(X=_df_merged, **predict_kwargs).items():
@@ -421,7 +423,13 @@ class MarginalEffects:
             df_mapping = X.groupby(binned_fname)[fname].agg(aggfun).reset_index()
 
         # for any bins that aren't actually observed, use the midpoint:
-        df_mapping[fname].fillna(pd.Series([x.mid for x in df_mapping[binned_fname]]), inplace=True)
+        midpoints = pd.Series([x.mid for x in df_mapping[binned_fname]])
+        if np.isinf(midpoints).any() and df_mapping[fname].isnull().any():
+            raise ValueError(
+                f"[{fname}] `inf` bin cuts cannot be used when no data present in the bin:"
+                f"{df_mapping[binned_fname][np.isinf(midpoints)]}"
+            )
+        df_mapping[fname].fillna(midpoints, inplace=True)
         return df_mapping
 
     def _get_df_novary(self,
