@@ -249,7 +249,9 @@ class MarginalEffects:
             from plotnine import ggplot, aes, geom_line, geom_hline, facet_wrap, theme, theme_bw, geom_point
         except ImportError as e:
             raise RuntimeError("plotting requires `plotnine` package") from e
-        facets = facets or []
+        if isinstance(facets, str):
+            facets = [facets]
+        facets = list(facets or [])
 
         data = self.to_dataframe()
         if len(self.config['pred_colnames']) > 1:
@@ -261,28 +263,45 @@ class MarginalEffects:
             )
             facets.append('prediction')
 
+        # available default features:
         available_default_features = list(self.config['vary_features']) + list(self.config['groupby_features'])
+
+        # if x is set, that's not an available default feature:
         if x and x in available_default_features:
             available_default_features.remove(x)
-        if color and color in available_default_features:
-            available_default_features.remove(color)
+        # if color (or its binned version) is set, that's not an available default feature:
+        if color:
+            for colname in [color, color.replace('_binned', '')]:
+                if colname in available_default_features:
+                    available_default_features.remove(colname)
+        # facets (or their binned versions) that are set are not available default features:
         for facet in facets:
-            if facet in available_default_features:
-                available_default_features.remove(facet)
+            for colname in [facet, facet.replace('_binned', '')]:
+                if colname in available_default_features:
+                    available_default_features.remove(colname)
 
         aes_kwargs = {'y': 'predicted'}
+
+        # x:
         if not x:
             x = available_default_features.pop(0)
         aes_kwargs['x'] = x
+
+        # for color/facets use binned versions if available:
+        for i, feat in enumerate(list(available_default_features)):
+            if feat + '_binned' in self._dataframe.columns:
+                available_default_features[i] += '_binned'
+
+        # color:
         if not color and available_default_features:
             color = available_default_features.pop(0)
-            if color + '_binned' in self._dataframe.columns:
-                color += '_binned'
         if color:
             aes_kwargs['group'] = aes_kwargs['color'] = color
+
+        # remaining go to facets:
         if available_default_features:
             if not facets:
-                facets = available_default_features
+                facets = list(available_default_features)
             else:
                 warn(f"Adding {available_default_features} to `facets`")
                 facets.extend(available_default_features)
@@ -303,7 +322,7 @@ class MarginalEffects:
                 raise RuntimeError("`y` was not passed so cannot include_actuals")
 
         if facets:
-            plot += facet_wrap(facets, scales='free_y')
+            plot += facet_wrap(facets, scales='free_y', labeller='label_both')
         return plot
 
     @staticmethod
