@@ -13,6 +13,19 @@ from tqdm.auto import tqdm
 
 class Binned:
     def __init__(self, col: str, bins: Union[int, Sequence] = 20, **kwargs):
+        """
+        This class creates an object which can bin a pandas.Series.
+        ```
+        binner = Binned("my_feature", bins=20)
+        binned: pd.Series = binner(model_matrix)
+        ```
+        leaves `binned` as a pd.Series that's been cut into 20 categoricals.
+
+        Other options:
+        If `bins` is iterable, then use `pd.cut`, and the elements in `bins` are the
+        edges of the cut
+        If `bins` is anything else, then return the column, uncut.
+        """
         self.orig_name = col
         self.bins = bins
         self.kwargs = kwargs
