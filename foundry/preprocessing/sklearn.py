@@ -1,12 +1,12 @@
 import itertools
-from typing import Callable, Iterable, Sequence, Tuple, Union
+from typing import Callable, Iterable, Optional, Sequence, Tuple, Union
 from warnings import warn
 
 import numpy as np
 import pandas as pd
 from scipy import sparse
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.compose import ColumnTransformer
+from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import FunctionTransformer as FunctionTransformerBase
 
@@ -155,3 +155,42 @@ def as_transformer(x: TransformerLike) -> TransformerMixin:
         return FunctionTransformer(x)
     else:
         raise TypeError(f"{type(x).__name__} does not have a `transform()` method.")
+
+
+def make_column_dropper(
+    names: Optional[Union[str, Iterable[str]]]=None,
+    pattern: Optional[str]=None
+):
+    """
+    Returns a DataFrameTranformer (i.e. a ColumnTransformer) that drops a subset of features.
+
+    Useful when you want certain downstream paths of the sklearn pipeline to use different features than each other.
+
+    names: the name or names of features to drop
+    regex: the pattern to match for features to drop
+    """
+    kwargs = {
+        "remainder": "passthrough", # we specify which columns to drop, the rest stay.
+        "verbose_feature_names_out": False, # don't add the "remainder__" prefix to the undropped columns
+    }
+    if names is None and pattern is None:
+        return DataFrameTransformer(transformers = [], **kwargs)
+    if names and pattern:
+        raise ValueError("Both names and regex defined for drop_transformer. Only one may be defined.")
+
+    # regex part
+    if pattern is not None:
+        return DataFrameTransformer(
+            transformers = [
+                ("drop", "drop", make_column_selector(pattern))
+            ],
+            **kwargs
+        )
+    # names part
+    else:
+        return DataFrameTransformer(
+            transformers=[
+                ("drop", "drop", names)
+            ],
+            **kwargs
+        )
