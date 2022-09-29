@@ -157,7 +157,10 @@ def as_transformer(x: TransformerLike) -> TransformerMixin:
         raise TypeError(f"{type(x).__name__} does not have a `transform()` method.")
 
 
-def make_column_dropper(names: Optional[Union[str, Iterable[str]]]=None, pattern: Optional[str]=None):
+def make_column_dropper(
+    names: Optional[Union[str, Iterable[str]]]=None,
+    pattern: Optional[str]=None
+):
     """
     Returns a DataFrameTranformer (i.e. a ColumnTransformer) that drops a subset of features.
 
@@ -191,3 +194,27 @@ def make_column_dropper(names: Optional[Union[str, Iterable[str]]]=None, pattern
             ],
             **kwargs
         )
+
+
+class make_column_dropper_2:
+    def __init__(
+        self,
+        names: Optional[Union[str, Iterable[str]]]=None,
+        pattern: Optional[str]=None
+    ):
+        if names is not None and pattern is not None:
+            raise ValueError("Both names and pattern defined for drop_transformer. Only one may be defined.")
+
+        self.names = [names] if isinstance(names, str) else names
+        self.pattern = pattern
+
+    def __call__(
+        self, df: pd.DataFrame,
+    ):
+        if self.names is None and self.pattern is None:
+            return df
+        elif self.pattern is not None:
+            columns_to_drop: Iterable[str] = df.filter(regex=self.pattern).columns
+            return df.drop(columns=columns_to_drop)
+        else:
+            return df.drop(columns=self.names)
