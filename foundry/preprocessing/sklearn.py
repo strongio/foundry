@@ -157,7 +157,10 @@ def as_transformer(x: TransformerLike) -> TransformerMixin:
         raise TypeError(f"{type(x).__name__} does not have a `transform()` method.")
 
 
-def make_column_dropper(names: Optional[Union[str, Iterable[str]]]=None, pattern: Optional[str]=None):
+def make_column_dropper(
+    names: Optional[Union[str, Iterable[str]]]=None,
+    pattern: Optional[str]=None
+):
     """
     Returns a DataFrameTranformer (i.e. a ColumnTransformer) that drops a subset of features.
 
