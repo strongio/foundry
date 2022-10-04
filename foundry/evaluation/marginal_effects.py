@@ -1,4 +1,3 @@
-from collections import defaultdict
 from typing import Collection, Dict, Optional, Iterable, Tuple
 from warnings import warn
 
@@ -14,6 +13,19 @@ from tqdm.auto import tqdm
 
 class Binned:
     def __init__(self, col: str, bins: Union[int, Sequence] = 20, **kwargs):
+        """
+        This class creates an object which can bin a pandas.Series.
+        ```
+        binner = Binned("my_feature", bins=20)
+        binned: pd.Series = binner(model_matrix)
+        ```
+        leaves `binned` as a pd.Series that's been cut into 20 categoricals.
+
+        Other options:
+        If `bins` is iterable, then use `pd.cut`, and the elements in `bins` are the
+        edges of the cut
+        If `bins` is anything else, then return the column, uncut.
+        """
         self.orig_name = col
         self.bins = bins
         self.kwargs = kwargs
@@ -57,11 +69,12 @@ def raw(col: str) -> Callable:
 
 
 class MarginalEffects:
-    def __init__(self, pipeline: Pipeline, predict_method: Optional[str] = None):
+    def __init__(self, pipeline: Pipeline, predict_method: Optional[str] = None, quiet: bool = False):
         self.pipeline = pipeline
         self.predict_method = predict_method
         self._dataframe = None
         self.config = None
+        self.quiet = quiet
 
     @property
     def feature_names_in(self) -> Sequence[str]:
@@ -197,13 +210,15 @@ class MarginalEffects:
                 self.config['pred_colnames'].append(col)
         else:
             pred_colnames = set()
-            if df_no_vary.shape[0] > 100_000:
-                warn("Number of records is large, and `marginalize_aggfun` is not set -- this might be slow.")
+            if df_no_vary.shape[0] > 100_000 and not self.quiet:
+                print("Consider setting `marginalize_aggfun` or downsampling data.")
 
             chunks = [df for _, df in df_vary_grid.groupby(list(vary_features), sort=False)]
+            if not self.quiet:
+                chunks = tqdm(chunks, delay=10)
 
             df_me = []
-            for _df_vary_chunk in tqdm(chunks, delay=10):
+            for _df_vary_chunk in chunks:
 
                 _df_merged = _df_vary_chunk.merge(df_no_vary, how='left', on=groupby_colnames)
                 for col, preds in self.get_predictions(X=_df_merged, **predict_kwargs).items():
@@ -247,7 +262,9 @@ class MarginalEffects:
             from plotnine import ggplot, aes, geom_line, geom_hline, facet_wrap, theme, theme_bw, geom_point
         except ImportError as e:
             raise RuntimeError("plotting requires `plotnine` package") from e
-        facets = facets or []
+        if isinstance(facets, str):
+            facets = [facets]
+        facets = list(facets or [])
 
         data = self.to_dataframe()
         if len(self.config['pred_colnames']) > 1:
@@ -259,28 +276,45 @@ class MarginalEffects:
             )
             facets.append('prediction')
 
+        # available default features:
         available_default_features = list(self.config['vary_features']) + list(self.config['groupby_features'])
+
+        # if x is set, that's not an available default feature:
         if x and x in available_default_features:
             available_default_features.remove(x)
-        if color and color in available_default_features:
-            available_default_features.remove(color)
+        # if color (or its binned version) is set, that's not an available default feature:
+        if color:
+            for colname in [color, color.replace('_binned', '')]:
+                if colname in available_default_features:
+                    available_default_features.remove(colname)
+        # facets (or their binned versions) that are set are not available default features:
         for facet in facets:
-            if facet in available_default_features:
-                available_default_features.remove(facet)
+            for colname in [facet, facet.replace('_binned', '')]:
+                if colname in available_default_features:
+                    available_default_features.remove(colname)
 
         aes_kwargs = {'y': 'predicted'}
+
+        # x:
         if not x:
             x = available_default_features.pop(0)
         aes_kwargs['x'] = x
+
+        # for color/facets use binned versions if available:
+        for i, feat in enumerate(list(available_default_features)):
+            if feat + '_binned' in self._dataframe.columns:
+                available_default_features[i] += '_binned'
+
+        # color:
         if not color and available_default_features:
             color = available_default_features.pop(0)
-            if color + '_binned' in self._dataframe.columns:
-                color += '_binned'
         if color:
             aes_kwargs['group'] = aes_kwargs['color'] = color
+
+        # remaining go to facets:
         if available_default_features:
             if not facets:
-                facets = available_default_features
+                facets = list(available_default_features)
             else:
                 warn(f"Adding {available_default_features} to `facets`")
                 facets.extend(available_default_features)
@@ -301,7 +335,7 @@ class MarginalEffects:
                 raise RuntimeError("`y` was not passed so cannot include_actuals")
 
         if facets:
-            plot += facet_wrap(facets, scales='free_y')
+            plot += facet_wrap(facets, scales='free_y', labeller='label_both')
         return plot
 
     @staticmethod
@@ -421,7 +455,13 @@ class MarginalEffects:
             df_mapping = X.groupby(binned_fname)[fname].agg(aggfun).reset_index()
 
         # for any bins that aren't actually observed, use the midpoint:
-        df_mapping[fname].fillna(pd.Series([x.mid for x in df_mapping[binned_fname]]), inplace=True)
+        midpoints = pd.Series([x.mid for x in df_mapping[binned_fname]])
+        if np.isinf(midpoints).any() and df_mapping[fname].isnull().any():
+            raise ValueError(
+                f"[{fname}] `inf` bin cuts cannot be used when no data present in the bin:"
+                f"{df_mapping[binned_fname][np.isinf(midpoints)]}"
+            )
+        df_mapping[fname].fillna(midpoints, inplace=True)
         return df_mapping
 
     def _get_df_novary(self,
