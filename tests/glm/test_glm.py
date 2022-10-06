@@ -36,6 +36,54 @@ def fake_family() -> Family:
     )
 
 
+class TestPredictProba:
+    @pytest.mark.parametrize(
+        argnames=['family_nm', 'expected'],
+        argvalues=[
+            ('binomial', True),
+            ('gaussian', False)
+        ]
+    )
+    def test_method_added_to_instance_dynamically(self, family_nm: str, expected: bool):
+        """
+        method should only exist in instances if their distribution has 'probs'
+        """
+        family = Family.from_name(family_nm)
+        glm = Glm(family=family)
+        glm._fit = Mock(glm._fit, autospec=True)
+        glm.fit(X=None, y=None)
+        assert hasattr(family.distribution_cls, 'probs') == expected
+        assert hasattr(glm, 'predict_proba') == expected
+
+    def test_method(self):
+        """
+        Make sure predict_proba uses the `probs` attribute correctly
+        """
+        family = Family(
+            distribution_cls=torch.distributions.Binomial,
+            params_and_links={'probs': torch.distributions.transforms.identity_transform}
+        )
+        glm = Glm(family=family)
+        glm._fit = Mock(glm._fit, autospec=True)
+        glm.fit(X=None, y=None)
+        glm._build_model_mats = Mock(glm._build_model_mats, autospec=True)
+        glm._build_model_mats.return_value = {}, None, None
+        glm._get_dist_kwargs = Mock(glm._get_dist_kwargs, autospec=True)
+        glm._get_dist_kwargs.return_value = {
+            'probs': to_2d(torch.tensor([.1, .9, .1, .9])),
+            'total_count': to_2d(torch.tensor([1, 1, 2, 2]))
+        }
+        np.testing.assert_array_equal(
+            glm.predict_proba(X=None),
+            glm._get_dist_kwargs.return_value['probs']
+        )
+        # bonus: make sure standard predict _doesnt_ use probs
+        np.testing.assert_array_equal(
+            glm.predict(X=None, type='mean'),
+            glm._get_dist_kwargs.return_value['probs'] * glm._get_dist_kwargs.return_value['total_count']
+        )
+
+
 class TestBuildModelMats:
     @pytest.fixture()
     def glm(self, fake_family: Family):

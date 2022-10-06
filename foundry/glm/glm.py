@@ -1,4 +1,5 @@
 import os
+from functools import partial
 
 from time import sleep
 from typing import Union, Sequence, Optional, Callable, Tuple, Dict
@@ -110,6 +111,10 @@ class Glm(BaseEstimator):
         """
         self.family = self._init_family(self.family)
 
+        if hasattr(self.family.distribution_cls, 'probs'):
+            # noinspection PyAttributeOutsideInit
+            self.predict_proba = partial(self.predict, type='probs')
+
         if isinstance(self.penalty, (tuple, list)):
             raise NotImplementedError  # TODO
         else:
@@ -131,6 +136,8 @@ class Glm(BaseEstimator):
             else:
                 family = Family.from_name(family)
         return family
+
+
 
     @retry(retry=retry_if_exception_type(FitFailedException), reraise=True, stop=stop_after_attempt(N_FIT_RETRIES + 1))
     def _fit(self,
@@ -428,17 +435,6 @@ class Glm(BaseEstimator):
         """
         x_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
         return self.get_log_prob(x_dict, lp_dict, mean=True, include_penalty=False).item()
-
-    def predict_proba(self,
-                      X: ModelMatrix,
-                      kwargs_as_is: Union[bool, dict] = False,
-                      **kwargs) -> np.ndarray:
-        # TODO: predict_log_proba
-        return self.predict(
-            X=X,
-            kwargs_as_is=kwargs_as_is,
-            **kwargs
-        )
 
     @torch.no_grad()
     def predict(self,
