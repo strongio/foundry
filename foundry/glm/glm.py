@@ -429,7 +429,7 @@ class Glm(BaseEstimator):
         return None
 
     @torch.no_grad()
-    def score(self, X: ModelMatrix, y: ModelMatrix, sample_weight: Optional[np.ndarray]) -> float:
+    def score(self, X: ModelMatrix, y: ModelMatrix, sample_weight: Optional[np.ndarray] = None) -> float:
         """
         Uses log_prob (without penalty) for scoring.
         """
