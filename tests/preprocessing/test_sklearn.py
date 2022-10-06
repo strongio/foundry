@@ -1,12 +1,10 @@
-from typing import Callable
 import pandas as pd
-import numpy as np
 import pytest
-from unittest.mock import patch
-from pandas.testing import assert_series_equal, assert_frame_equal
+from pandas.testing import assert_frame_equal
 from sklearn.pipeline import make_pipeline
 
 from foundry.preprocessing import make_column_dropper
+
 
 @pytest.fixture()
 def small_dataframe():
@@ -21,20 +19,20 @@ def small_dataframe():
     "kwargs, expected",
     [
         (
-            dict(),
-            pd.DataFrame({"A": [0., 1., 2., 3.,], "B": [0.5, -0.5, 0.5, -0.5], "C": [-1., -2., -3., -4.,]})
+                dict(),
+                pd.DataFrame({"A": [0., 1., 2., 3., ], "B": [0.5, -0.5, 0.5, -0.5], "C": [-1., -2., -3., -4., ]})
         ),
         (
-            {"names": "A"},
-            pd.DataFrame({"B": [0.5, -0.5, 0.5, -0.5], "C": [-1., -2., -3., -4.]})
+                {"names": "A"},
+                pd.DataFrame({"B": [0.5, -0.5, 0.5, -0.5], "C": [-1., -2., -3., -4.]})
         ),
         (
-            {"names": ["A", "B"]},
-            pd.DataFrame({"C": [-1., -2., -3., -4.,]})
+                {"names": ["A", "B"]},
+                pd.DataFrame({"C": [-1., -2., -3., -4., ]})
         ),
         (
-            {"pattern": "[AB]"},
-            pd.DataFrame({"C": [-1., -2., -3., -4.,]})
+                {"pattern": "[AB]"},
+                pd.DataFrame({"C": [-1., -2., -3., -4., ]})
         ),
         pytest.param(
             {"names": "A", "pattern": ".*"},

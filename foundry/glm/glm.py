@@ -11,7 +11,7 @@ import torch.nn
 from sklearn.base import BaseEstimator
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 from foundry.glm.family import Family
 from foundry.glm.family.survival import SurvivalFamily
@@ -231,12 +231,16 @@ class Glm(BaseEstimator):
 
         return self
 
-    def get_log_prob(self, x_dict: dict, lp_dict: dict, mean: bool = True) -> torch.Tensor:
+    def get_log_prob(self,
+                     x_dict: dict,
+                     lp_dict: dict,
+                     mean: bool = True,
+                     include_penalty: bool = True) -> torch.Tensor:
         """
         Get the penalized log prob, applying weights as needed.
         """
         log_probs = self.family.log_prob(self.family(**self._get_dist_kwargs(**x_dict)), **lp_dict)
-        penalty = self._get_penalty()
+        penalty = self._get_penalty() if include_penalty else 0.
         log_prob = log_probs.sum() - penalty
         if mean:
             log_prob = log_prob / lp_dict['weight'].sum()
@@ -418,6 +422,25 @@ class Glm(BaseEstimator):
         return None
 
     @torch.no_grad()
+    def score(self, X: ModelMatrix, y: ModelMatrix, sample_weight: Optional[np.ndarray]) -> float:
+        """
+        Uses log_prob (without penalty) for scoring.
+        """
+        x_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
+        return self.get_log_prob(x_dict, lp_dict, mean=True, include_penalty=False).item()
+
+    def predict_proba(self,
+                      X: ModelMatrix,
+                      kwargs_as_is: Union[bool, dict] = False,
+                      **kwargs) -> np.ndarray:
+        # TODO: predict_log_proba
+        return self.predict(
+            X=X,
+            kwargs_as_is=kwargs_as_is,
+            **kwargs
+        )
+
+    @torch.no_grad()
     def predict(self,
                 X: ModelMatrix,
                 type: str = 'mean',
@@ -481,8 +504,6 @@ class Glm(BaseEstimator):
                 penalty_fun(self.module_[param_name], self._module_param_names_[param_name])
             )
         return torch.stack(to_sum).sum()
-
-    # TODO: predict_proba, predict_log_proba
 
     @property
     def coef_dataframe_(self) -> pd.DataFrame:
