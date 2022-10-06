@@ -456,6 +456,8 @@ class Glm(BaseEstimator):
         :return: A ndarray of predictions.
         """
         x_dict, *_ = self._build_model_mats(X=X, y=None)
+        if 'validate_args' in kwargs:
+            x_dict['validate_args'] = kwargs.pop('validate_args')
         dist_kwargs = self._get_dist_kwargs(**x_dict)
         dist = self.family(**dist_kwargs)
         result = getattr(dist, type)
