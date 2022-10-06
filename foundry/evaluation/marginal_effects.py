@@ -104,7 +104,7 @@ class MarginalEffects:
                  vary_features: Sequence[Union[str, Binned]],
                  groupby_features: Collection[Union[str, Binned]] = (),
                  vary_features_aggfun: Union[str, dict, Callable] = 'mean',
-                 marginalize_aggfun: Union[str, dict, Callable, None] = 'mean',
+                 marginalize_aggfun: Union[str, dict, Callable, None] = 'median',
                  y_aggfun: Union[str, Callable] = 'mean',
                  **predict_kwargs) -> 'MarginalEffects':
         """
