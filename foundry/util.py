@@ -1,4 +1,3 @@
-import copy
 from typing import Union, Dict
 
 import numpy as np
@@ -58,14 +57,17 @@ class SliceDict(dict):
     """
 
     def __init__(self, **kwargs):
-        lens = [v.shape[0] for v in kwargs.values()]
-        num_lens = len(set(lens))
-        if num_lens:
-            if num_lens > 1:
-                raise ValueError("XXX")
-            self._len = lens[0]
-        else:
+        lengths = [value.shape[0] for value in kwargs.values()]
+        lengths_set = set(lengths)
+        if lengths_set and (len(lengths_set) != 1):
+            raise ValueError(
+                "Initialized with items of different lengths: {}".format(', '.join(map(str, sorted(lengths_set))))
+            )
+
+        if not lengths:
             self._len = 0
+        else:
+            self._len = lengths[0]
 
         super().__init__(**kwargs)
 
@@ -87,6 +89,8 @@ class SliceDict(dict):
             self._len = val_len
         elif len(self) != val_len:
             raise ValueError("")
+        if not isinstance(key, str):
+            raise TypeError("Key must be str, not {}.".format(type(key)))
 
         super().__setitem__(key, value)
 
@@ -95,14 +99,19 @@ class SliceDict(dict):
             self.__setitem__(key, value)
 
     def __repr__(self):
-        out = super(SliceDict, self).__repr__()
+        out = super().__repr__()
         return "SliceDict(**{})".format(out)
 
-    def copy(self) -> 'SliceDict':
+    @property
+    def shape(self):
+        return (self._len,)
+
+    def copy(self):
         return type(self)(**self)
 
     def fromkeys(self, *args, **kwargs):
-        raise NotImplementedError
+        """fromkeys method makes no sense with SliceDict and is thus not supported."""
+        raise TypeError("SliceDict does not support fromkeys.")
 
     def __eq__(self, other) -> bool:
         raise NotImplementedError
