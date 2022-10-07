@@ -90,6 +90,12 @@ class TestBinned():
         assert_series_equal(binned(test_dataframe), expected)
 
 
+@patch("foundry.evaluation.marginal_effects.Binned", autospec=True)
+def test_binned(fake_Binned):
+    binned_feature = binned("my_feature", bins=20)
+    fake_Binned.assert_called_once_with("my_feature", bins=20)
+
+
 def test_raw():
     column_name = "my_feature"
     test_dataframe = pd.DataFrame({
