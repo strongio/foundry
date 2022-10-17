@@ -57,7 +57,7 @@ class SliceDict(dict):
     """
 
     def __init__(self, **kwargs):
-        lengths = [value.shape[0] for value in kwargs.values()]
+        lengths = [value.shape[0] for value in kwargs.values() if hasattr(value, 'shape')]
         lengths_set = set(lengths)
         if lengths_set and (len(lengths_set) != 1):
             raise ValueError(
@@ -65,7 +65,7 @@ class SliceDict(dict):
             )
 
         if not lengths:
-            self._len = 0
+            self._len = 0  # will be set later when we get our first item, see __setitem__
         else:
             self._len = lengths[0]
 
@@ -81,16 +81,22 @@ class SliceDict(dict):
             )
         if isinstance(sl, str):
             return super(SliceDict, self).__getitem__(sl)
-        return SliceDict(**{k: v[sl] for k, v in self.items()})
+        return SliceDict(**{k: (v[sl] if hasattr(v, 'shape') else v) for k, v in self.items()})
 
     def __setitem__(self, key: str, value: ArrayType):
-        val_len = value.shape[0]
-        if not len(self):
-            self._len = val_len
-        elif len(self) != val_len:
-            raise ValueError("")
-        if not isinstance(key, str):
-            raise TypeError("Key must be str, not {}.".format(type(key)))
+        if hasattr(value, 'shape'):
+            val_len = value.shape[0]
+            if not len(self):
+                self._len = val_len
+            elif len(self) != val_len:
+                raise ValueError(f"value must have .shape[0] of {len(self):,}, got {val_len:,}")
+            if not isinstance(key, str):
+                raise TypeError("Key must be str, not {}.".format(type(key)))
+        elif hasattr(value, '__len__'):
+            raise ValueError(
+                f"Values inserted into `{type(self).__name__}` must be arrays (i.e. have a `shape`) or must be "
+                f"dimensionless (e.g. `bool`). This value is not an array but has a length."
+            )
 
         super().__setitem__(key, value)
 
@@ -141,6 +147,8 @@ class ToSliceDict(TransformerMixin, BaseEstimator):
             raise RuntimeError("This instance is not fitted yet.")
 
         if isinstance(X, dict):
+            X = X.copy()  # consistent behavior
+
             # if it's already a dict, not much transforming to do, but need to validate
             keys_ok = set(X).issubset(set(self.mapping)) if extras_ok else (set(X) == set(self.mapping))
             if not keys_ok:
