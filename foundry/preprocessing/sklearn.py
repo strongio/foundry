@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.compose import ColumnTransformer, make_column_selector
+from sklearn.compose import ColumnTransformer
+from sklearn.compose import make_column_selector as make_column_selector_sklearn
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import FunctionTransformer as FunctionTransformerBase
 
@@ -156,7 +157,9 @@ def as_transformer(x: TransformerLike) -> TransformerMixin:
     else:
         raise TypeError(f"{type(x).__name__} does not have a `transform()` method.")
 
-
+class make_column_selector(make_column_selector_sklearn):
+    def __repr__(self):
+        return f"make_column_selector(pattern={self.pattern}, dtype_include={self.dtype_include}, dtype_exclude={self.dtype_exclude})"
 
 def make_column_dropper(*args, **kwargs):
     warn("make_column_dropper is deprecated, use make_drop_transformer")
