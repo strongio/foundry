@@ -3,6 +3,7 @@ from .sklearn import (
     InteractionFeatures,
     as_transformer,
     identity,
-    make_column_dropper
+    make_column_selector,
+    make_drop_transformer,
 )
 from .dates import FourierFeatures
