@@ -161,10 +161,6 @@ class make_column_selector(make_column_selector_sklearn):
     def __repr__(self):
         return f"make_column_selector(pattern={self.pattern}, dtype_include={self.dtype_include}, dtype_exclude={self.dtype_exclude})"
 
-def make_column_dropper(*args, **kwargs):
-    warn("make_column_dropper is deprecated, use make_drop_transformer")
-    return make_drop_transformer(*args, **kwargs)
-
 def make_drop_transformer(
     names: Optional[Union[str, Iterable[str]]]=None,
     pattern: Optional[str]=None
