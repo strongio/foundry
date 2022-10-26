@@ -157,7 +157,12 @@ def as_transformer(x: TransformerLike) -> TransformerMixin:
         raise TypeError(f"{type(x).__name__} does not have a `transform()` method.")
 
 
-def make_column_dropper(
+
+def make_column_dropper(*args, **kwargs):
+    warn("make_column_dropper is deprecated, use make_drop_transformer")
+    return make_drop_transformer(*args, **kwargs)
+
+def make_drop_transformer(
     names: Optional[Union[str, Iterable[str]]]=None,
     pattern: Optional[str]=None
 ):

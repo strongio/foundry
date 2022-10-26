@@ -3,7 +3,7 @@ import pytest
 from pandas.testing import assert_frame_equal
 from sklearn.pipeline import make_pipeline
 
-from foundry.preprocessing import make_column_dropper
+from foundry.preprocessing import make_drop_transformer
 
 
 @pytest.fixture()
@@ -48,9 +48,9 @@ def small_dataframe():
         "err_too_many",
     ]
 )
-def test_make_column_dropper(small_dataframe, kwargs, expected):
+def test_make_drop_transformer(small_dataframe, kwargs, expected):
     my_pipeline = make_pipeline(
-        make_column_dropper(**kwargs)
+        make_drop_transformer(**kwargs)
     )
 
     test = my_pipeline.fit(small_dataframe).transform(small_dataframe)
