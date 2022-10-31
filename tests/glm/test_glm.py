@@ -73,9 +73,16 @@ class TestPredictProba:
             'probs': to_2d(torch.tensor([.1, .9, .1, .9])),
             'total_count': to_2d(torch.tensor([1, 1, 2, 2]))
         }
+        preds = glm.predict_proba(X=None)
+        assert len(preds.shape) == 2
+        assert preds.shape[1] == 2
         np.testing.assert_array_equal(
-            glm.predict_proba(X=None),
+            preds[:, [0]],
             glm._get_dist_kwargs.return_value['probs']
+        )
+        np.testing.assert_array_equal(
+            preds[:, [1]],
+            1 - glm._get_dist_kwargs.return_value['probs']
         )
         # bonus: make sure standard predict _doesnt_ use probs
         np.testing.assert_array_equal(
@@ -85,6 +92,8 @@ class TestPredictProba:
 
 
 class TestBuildModelMats:
+    # TODO: should instead test `_get_xdict` and `_get_ydict` separately
+
     @pytest.fixture()
     def glm(self, fake_family: Family):
         glm = Glm(family=fake_family)
@@ -93,6 +102,8 @@ class TestBuildModelMats:
         glm.module_ = Mock(spec_set=['dtype', 'device'])
         glm.module_.dtype = torch.get_default_dtype()
         glm.module_.device = torch.device('cpu')
+
+        glm.module_num_outputs = 1
 
         return glm
 
@@ -247,6 +258,8 @@ class TestBuildModelMats:
         ]
     )
     def setup(self, glm: Glm, request: 'FixtureRequest') -> Fixture:
+        if request.param.expected_ydict:
+            glm.module_num_outputs = request.param.expected_ydict['value'].shape[1]
 
         # call, capturing exceptions if they're expected:
         exception = None
@@ -288,9 +301,12 @@ class TestBuildModelMats:
 
 
 class TestInit_Module:
+    # TODO: this test needs to be split into multiple tests and partially rewritten:
+    #   - half the test is testing that `to_slice_dict_` was intialized properly
+    #   - testing this^ by checking if it behaves properly; instead should test that its init method got correct args
+    #   - not mocking `module_factory`
     @pytest.fixture()
     def glm(self, fake_family: Family):
-        # todo: we're not mocking module_factory, so more of an integration test.
         return Glm(family=fake_family)
 
     Params = namedtuple('Params', ['description', 'X', 'y', 'expected_result', 'expected_exception'])
@@ -351,9 +367,6 @@ class TestInit_Module:
                           expected_result: torch.nn.ModuleDict,
                           expected_exception: Optional[Type[Exception]],
                           description: str):
-        """
-        Test that _init_module calls the `module_factory`, handling x and y shapes properly.
-        """
 
         if expected_exception:
             with pytest.raises(expected_exception):

@@ -60,6 +60,7 @@ class Glm(BaseEstimator):
         self._module_ = None
         self._module_param_names_ = None
         self.to_slice_dict_ = None
+        self.module_num_outputs = None
 
         # laplace params:
         self._coef_mvnorm_ = None
@@ -111,9 +112,11 @@ class Glm(BaseEstimator):
         """
         self.family = self._init_family(self.family)
 
-        if hasattr(self.family.distribution_cls, 'probs'):
+        if self.is_classifier:
+            # sklearn uses `hasattr` in some cases to check for `predict_proba`, so can't just
+            # have it error out for some distributions -- need to add it dynamically.
             # noinspection PyAttributeOutsideInit
-            self.predict_proba = partial(self.predict, type='probs')
+            self.predict_proba = self._predict_proba
 
         if isinstance(self.penalty, (tuple, list)):
             raise NotImplementedError  # TODO
@@ -121,6 +124,24 @@ class Glm(BaseEstimator):
             if groups is not None:
                 warn("`groups` argument will be ignored because self.penalty is a single value not a sequence.")
             return self._fit(X=X, y=y, sample_weight=sample_weight, **kwargs)
+
+    @property
+    def is_classifier(self) -> bool:
+        return hasattr(self.family.distribution_cls, 'probs')
+
+    def _predict_proba(self,
+                       X: ModelMatrix,
+                       kwargs_as_is: Union[bool, dict] = False,
+                       **kwargs) -> np.ndarray:
+        """
+        Return the probability of each class, handling the drop-one-class behavior.
+        """
+        assert self.is_classifier
+        preds = self.predict(X=X, type='probs', kwargs_as_is=kwargs_as_is, **kwargs)
+        last_class = 1 - preds.sum(axis=1, keepdims=True)
+        preds = np.concatenate([preds, last_class], axis=1)
+        assert np.allclose(preds.sum(axis=1), 1.0)  # TODO: is this too stringent when there are many classes?
+        return preds
 
     @staticmethod
     def family_aliases() -> dict:
@@ -136,8 +157,6 @@ class Glm(BaseEstimator):
             else:
                 family = Family.from_name(family)
         return family
-
-
 
     @retry(retry=retry_if_exception_type(FitFailedException), reraise=True, stop=stop_after_attempt(N_FIT_RETRIES + 1))
     def _fit(self,
@@ -318,6 +337,17 @@ class Glm(BaseEstimator):
             # note: no `is_invalid` check, some families might support missing values or infs
             if ydict[k].shape[0] != y_len:
                 raise ValueError(f"{k}.shape[0] does not match y.shape[0]")
+
+        # make sure y has expected number of dims.
+        # this is complicated by how classification is handled, where multi-class classification involves
+        # ``n_classes-1`` module outputs.
+        drop_one_col = self.is_classifier & (self.module_num_outputs > 1)
+        expected_y_ncols = self.module_num_outputs + int(drop_one_col)
+        if ydict['value'].shape[1] != expected_y_ncols:
+            raise ValueError(f"Expected `y` to be array with ncols={expected_y_ncols}, got shape `{y.shape}`.")
+        if drop_one_col:
+            ydict['value'] = ydict['value'][:, :-1]
+
         return ydict
 
     def _build_model_mats(self,
@@ -363,7 +393,13 @@ class Glm(BaseEstimator):
         if isinstance(y, dict):
             y = y['value']
         y = to_2d(np.asanyarray(y))
-        output_dim = y.shape[1]
+
+        # determine output dim:
+        self.module_num_outputs = y.shape[1]
+        # if a classifier, then we want to avoid over-parameterization when it's a multi-class problem, but also
+        # support the much more common pattern of passing a vector of 1/0s in the case of binary classification
+        if self.is_classifier and self.module_num_outputs > 1:
+            self.module_num_outputs -= 1
 
         self._module_param_names_ = {}
         self.module_ = torch.nn.ModuleDict()
@@ -371,9 +407,9 @@ class Glm(BaseEstimator):
             Xp = X.get(dp, None)
             if Xp is None or not Xp.shape[1]:
                 # always use the base approach when no input features:
-                module, nms = Glm.module_factory(X=None, output_dim=output_dim)
+                module, nms = Glm.module_factory(X=None, output_dim=self.module_num_outputs)
             else:
-                module, nms = self.module_factory(X=Xp, output_dim=output_dim)
+                module, nms = self.module_factory(X=Xp, output_dim=self.module_num_outputs)
             self.module_[dp] = module
             self._module_param_names_[dp] = {k: np.asarray(v) for k, v in nms.items()}
 
@@ -447,14 +483,22 @@ class Glm(BaseEstimator):
 
         :param X: An array or dictionary of arrays.
         :param type: The type of the prediction -- i.e. the attribute to be extracted from the resulting
-         ``torch.Distribution``. The default is 'mean'. If that attribute is callable, will be called with ``kwargs``.
-        :param kwargs_as_is: If the ``type`` is callable, then kwargs that are lists/arrays will be converted to tensors, and
-         if 1D then will be unsqueezed to 2D (unsqueezing is to avoid accidental broadcasting, wherein (e.g.) a
-         distribution with batch_shape of N*1 receives a ``value`` w/shape (N,1), resulting in a (N,N) tensor, and
-         usually an OOM error). Can be ``True``, or can pass a dict to set true/false on per-kwarg basis.
+         ``torch.Distribution``. The default depends on the ``is_classifier`` attribute of this ``Glm``: if a
+         classifier, then will return the index of the predicted class; if not, then default `type='mean'`.
+        :param kwargs_as_is: If the ``type`` is callable, then kwargs that are arrays will be converted to tensors,
+         and if 1D then will be unsqueezed to 2D (unsqueezing is to avoid accidental broadcasting, wherein (e.g.) a
+         distribution with batch_shape of N*1 receives a ``value`` w/shape (N,1), resulting in a (N,N) tensor,
+         and usually an OOM error). Can be ``True``, or can pass a dict to set true/false on per-kwarg basis.
         :param kwargs: Keyword arguments to pass if ``type`` is callable. See ``kwargs_as_is``.
         :return: A ndarray of predictions.
         """
+        if type is None:
+            if self.is_classifier:
+                probs = self.predict_proba(X, kwargs_as_is=kwargs_as_is, **kwargs)
+                return probs.argmax(axis=1)
+            else:
+                type = 'mean'
+
         x_dict, *_ = self._build_model_mats(X=X, y=None)
         if 'validate_args' in kwargs:
             x_dict['validate_args'] = kwargs.pop('validate_args')
