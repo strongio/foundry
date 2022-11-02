@@ -31,7 +31,6 @@ class Binned:
         self.kwargs = kwargs
 
     def __call__(self, df: pd.DataFrame) -> pd.Series:
-        df = df.copy(deep=False)
         if pd.api.types.is_categorical_dtype(df[self.orig_name]):
             return df[self.orig_name]
 
@@ -160,6 +159,7 @@ class MarginalEffects:
         )
 
         # vary features ----
+        # TODO: this gets ignored for categorical features
         default = vary_features_aggfun.pop('_default', 'mean') if isinstance(vary_features_aggfun, dict) else 'mean'
         vary_features_aggfuns = self._standardize_maybe_dict(
             maybe_dict=vary_features_aggfun,
@@ -333,7 +333,6 @@ class MarginalEffects:
                 plot += geom_point(aes(y='actual', size='n'))
             else:
                 raise RuntimeError("`y` was not passed so cannot include_actuals")
-
         if facets:
             plot += facet_wrap(facets, scales='free_y', labeller='label_both')
         return plot
@@ -474,24 +473,30 @@ class MarginalEffects:
         groupby_colnames.
         """
         if marginalize_aggfun:
+            # TODO: default needs to depend on dtype
             default = marginalize_aggfun.pop('_default', 'median') if isinstance(marginalize_aggfun, dict) else 'median'
             marginalize_aggfuns = self._standardize_maybe_dict(
                 maybe_dict=marginalize_aggfun,
                 keys=colnames_to_agg,
                 default=default
             )
+            single_cols = []
             agg_kwargs = {}
             for feature in colnames_to_agg:
+                # TODO: if `feature` is single or groupby, we need to watch out for nulls. how best to do this?
                 if feature in groupby_colnames:
                     # groupby colnames are usually the binned version of a subset of marginalize_features.
                     # but sometimes (e.g. was already categorical so no binning needed) the groupby is all we need
                     continue
-                agg_kwargs[feature] = (feature, marginalize_aggfuns[feature])
+                if X[feature].nunique() <= 1:
+                    single_cols.append(feature)
+                else:
+                    agg_kwargs[feature] = (feature, marginalize_aggfuns[feature])
             if not agg_kwargs:
                 raise NotImplementedError("TODO")
 
             # collapse:
-            df_no_vary = X.groupby(groupby_colnames).agg(**agg_kwargs).reset_index()
+            df_no_vary = X.groupby(list(groupby_colnames) + single_cols).agg(**agg_kwargs).reset_index()
             # validate:
             if (df_no_vary.groupby(groupby_colnames).size() > 1).any():
                 for col in colnames_to_agg:
