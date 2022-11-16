@@ -48,10 +48,12 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
             self,
             interactions: Sequence[Tuple[Union[str, Callable], ...]] = (),
             sep: str = ":",
+            quiet: bool = False
     ):
         self.interactions = interactions
         self.sep = sep
         self.unrolled_interactions_ = None
+        self.quiet = quiet
 
     def fit(self, X: pd.DataFrame, y=None) -> 'InteractionFeatures':
         unrolled_interactions = []
@@ -62,7 +64,7 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
                 if callable(col):
                     any_callables = True
                     to_unroll[i] = col(X)
-                    if not to_unroll[i]:
+                    if not to_unroll[i] and not self.quiet:
                         warn(f"self.interactions[{int_idx}][{i}] is a callable that returned no columns")
                 elif isinstance(col, str):
                     to_unroll[i] = [col]
@@ -77,7 +79,7 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
                         # for three-way interactions or less, any duplicate means the interaction can be dropped
                         # for >3, unclear whether we should drop the interaction or just drop the duplicates
                         raise NotImplementedError(f"n>3-way interaction with duplicates: {interaction}")
-                    if not any_callables:
+                    if not any_callables and not self.quiet:
                         # if callable, no warning needed
                         warn(f"Dropping {interaction} because of duplicates.")
                     continue
@@ -93,7 +95,7 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
             if len(interaction) < 2:
                 continue
             new_col = self.sep.join(interaction)
-            if new_col in X.columns and new_col not in available_cols:
+            if new_col in X.columns and new_col not in available_cols and not self.quiet:
                 warn(f"{new_col} is duplicated.")
             # TODO: support non-numeric
             new_cols[new_col] = 1.0
