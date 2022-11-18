@@ -1,9 +1,11 @@
+from unittest.mock import create_autospec
+
 import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 from sklearn.pipeline import make_pipeline
 
-from foundry.preprocessing import make_drop_transformer, make_column_selector
+from foundry.preprocessing import make_drop_transformer, make_column_selector, InteractionFeatures
 
 
 @pytest.fixture()
@@ -68,3 +70,63 @@ def test_make_column_selector():
 
     assert column_selector(small_dataframe) == ["A", "B"]
     assert "[AB]" in repr(column_selector)
+
+
+class TestInteractionFeatures:
+
+    @pytest.mark.parametrize(
+        argnames=['interactions', 'expected'],
+        argvalues=[
+            pytest.param(
+                [('col1', 'col2')],
+                [('col1', 'col2')],
+                id='simple'
+            ),
+            pytest.param(
+                [('col1', lambda x: ['col2', 'col3']), ('col1', 'col4')],
+                [('col1', 'col2'), ('col1', 'col3'), ('col1', 'col4')],
+                id='with_callable'
+            ),
+        ]
+    )
+    def test_fit(self, interactions: list, expected: list):
+        assert InteractionFeatures(interactions=interactions).fit(X=None).unrolled_interactions_ == expected
+
+    @pytest.mark.parametrize(
+        argnames=['unrolled_interactions', 'x_cols', 'expected'],
+        argvalues=[
+            pytest.param(
+                [('col1', 'col2')],
+                ['col1', 'col2', 'col3'],
+                ['col1', 'col2', 'col3', 'col1:col2'],
+                id='simple'
+            ),
+            pytest.param(
+                [('col1', 'col2'), ('col1', 'col3'), ('col1', 'col4')],
+                ['col1', 'col2', 'col3', 'col4'],
+                ['col1', 'col2', 'col3', 'col4', 'col1:col2', 'col1:col3', 'col1:col4'],
+                id='simple2'
+            ),
+            pytest.param(
+                [('col1', 'colX')],
+                ['col1', 'col2', 'col3', 'col4'],
+                None,
+                id='missing',
+                marks=pytest.mark.xfail(raises=RuntimeError)
+            ),
+            pytest.param(
+                [('col1', 'col2')],
+                ['col1', 'col2', 'col1:col2'],
+                ['col1', 'col2', 'col1:col2'],
+                id='pre-existing'
+            ),
+        ]
+    )
+    def test_transform(self, unrolled_interactions: list, x_cols: list, expected: list):
+        instance = create_autospec(InteractionFeatures, instance=True)
+        instance.sep = ":"
+        instance.quiet = True
+        instance.unrolled_interactions_ = unrolled_interactions
+
+        X = pd.DataFrame(columns=x_cols)
+        assert InteractionFeatures.transform(instance, X=X).columns.tolist() == expected
