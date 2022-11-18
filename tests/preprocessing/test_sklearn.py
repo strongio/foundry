@@ -87,6 +87,12 @@ class TestInteractionFeatures:
                 [('col1', 'col2'), ('col1', 'col3'), ('col1', 'col4')],
                 id='with_callable'
             ),
+            pytest.param(
+                [('col1', lambda x: [])],
+                None,
+                id='callable_returns_nothing',
+                marks=pytest.mark.xfail(raises=RuntimeError)
+            ),
         ]
     )
     def test_fit(self, interactions: list, expected: list):
@@ -125,7 +131,6 @@ class TestInteractionFeatures:
     def test_transform(self, unrolled_interactions: list, x_cols: list, expected: list):
         instance = create_autospec(InteractionFeatures, instance=True)
         instance.sep = ":"
-        instance.quiet = True
         instance.unrolled_interactions_ = unrolled_interactions
 
         X = pd.DataFrame(columns=x_cols)

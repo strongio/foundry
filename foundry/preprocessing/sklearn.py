@@ -42,20 +42,30 @@ class DataFrameTransformer(ColumnTransformer):
 class InteractionFeatures(TransformerMixin, BaseEstimator):
     """
     Take a model-matrix (dataframe) and return a copy with added interaction-terms.
+
+    :param interactions: A list of tuples. Each contains either (1) a column-name, (2) a 'column-selector' like
+     ``sklearn.compose.make_column_selector()`` that takes a model-matrix and returns a list of column-names.
+    :param sep: The separator between colnames in the outputted columns.
+    :param no_selection_handling: If an element of ``interactions`` is a column-selector, and it returns no columns,
+     how should this be handled? The default 'raise' will throw an exception, 'warn' will emit a warning, and 'ignore'
+     will ignore.
     """
 
     def __init__(
             self,
             interactions: Sequence[Tuple[Union[str, Callable], ...]] = (),
             sep: str = ":",
-            quiet: bool = False
+            no_selection_handling: str = 'raise'
     ):
         self.interactions = interactions
         self.sep = sep
         self.unrolled_interactions_ = None
-        self.quiet = quiet
+        self.no_selection_handling = no_selection_handling
 
     def fit(self, X: pd.DataFrame, y=None) -> 'InteractionFeatures':
+        self.no_selection_handling = self.no_selection_handling.lower()
+        assert self.no_selection_handling in {'raise', 'warn', 'ignore'}
+
         unrolled_interactions = []
         for int_idx, cols in enumerate(self.interactions):
             any_callables = False
@@ -64,8 +74,12 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
                 if callable(col):
                     any_callables = True
                     to_unroll[i] = col(X)
-                    if not to_unroll[i] and not self.quiet:
-                        warn(f"self.interactions[{int_idx}][{i}] is a callable that returned no columns")
+                    if not to_unroll[i]:
+                        msg = f"self.interactions[{int_idx}][{i}] is a callable that returned no columns"
+                        if self.no_selection_handling == 'raise':
+                            raise RuntimeError(msg)
+                        if self.no_selection_handling == 'warn':
+                            warn(msg)
                 elif isinstance(col, str):
                     to_unroll[i] = [col]
                 else:
@@ -79,7 +93,7 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
                         # for three-way interactions or less, any duplicate means the interaction can be dropped
                         # for >3, unclear whether we should drop the interaction or just drop the duplicates
                         raise NotImplementedError(f"n>3-way interaction with duplicates: {interaction}")
-                    if not any_callables and not self.quiet:
+                    if not any_callables:
                         # if callable, no warning needed
                         warn(f"Dropping {interaction} because of duplicates.")
                     continue
@@ -95,7 +109,7 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
             if len(interaction) < 2:
                 continue
             new_col = self.sep.join(interaction)
-            if new_col in X.columns and new_col not in available_cols and not self.quiet:
+            if new_col in X.columns and new_col not in available_cols:
                 warn(f"{new_col} is duplicated.")
             # TODO: support non-numeric
             new_cols[new_col] = 1.0
