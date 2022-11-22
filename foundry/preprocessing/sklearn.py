@@ -42,18 +42,30 @@ class DataFrameTransformer(ColumnTransformer):
 class InteractionFeatures(TransformerMixin, BaseEstimator):
     """
     Take a model-matrix (dataframe) and return a copy with added interaction-terms.
+
+    :param interactions: A list of tuples. Each contains either (1) a column-name, (2) a 'column-selector' like
+     ``sklearn.compose.make_column_selector()`` that takes a model-matrix and returns a list of column-names.
+    :param sep: The separator between colnames in the outputted columns.
+    :param no_selection_handling: If an element of ``interactions`` is a column-selector, and it returns no columns,
+     how should this be handled? The default 'raise' will throw an exception, 'warn' will emit a warning, and 'ignore'
+     will ignore.
     """
 
     def __init__(
             self,
             interactions: Sequence[Tuple[Union[str, Callable], ...]] = (),
             sep: str = ":",
+            no_selection_handling: str = 'raise'
     ):
         self.interactions = interactions
         self.sep = sep
         self.unrolled_interactions_ = None
+        self.no_selection_handling = no_selection_handling
 
     def fit(self, X: pd.DataFrame, y=None) -> 'InteractionFeatures':
+        self.no_selection_handling = self.no_selection_handling.lower()
+        assert self.no_selection_handling in {'raise', 'warn', 'ignore'}
+
         unrolled_interactions = []
         for int_idx, cols in enumerate(self.interactions):
             any_callables = False
@@ -63,7 +75,11 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
                     any_callables = True
                     to_unroll[i] = col(X)
                     if not to_unroll[i]:
-                        warn(f"self.interactions[{int_idx}][{i}] is a callable that returned no columns")
+                        msg = f"self.interactions[{int_idx}][{i}] is a callable that returned no columns"
+                        if self.no_selection_handling == 'raise':
+                            raise RuntimeError(msg)
+                        if self.no_selection_handling == 'warn':
+                            warn(msg)
                 elif isinstance(col, str):
                     to_unroll[i] = [col]
                 else:
@@ -102,7 +118,13 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
                     raise RuntimeError(f"{col} in `interactions`, but not in columns:\n{available_cols}")
                 new_cols[new_col] *= X[col].values
 
-        return X.assign(**new_cols)
+        df_new_cols = pd.DataFrame(new_cols)
+        df_new_cols.index = X.index
+
+        return pd.concat([
+            X.drop(columns=X.columns[X.columns.isin(new_cols)]),
+            df_new_cols
+        ], axis=1)
 
 
 class FunctionTransformer(FunctionTransformerBase):
@@ -157,13 +179,15 @@ def as_transformer(x: TransformerLike) -> TransformerMixin:
     else:
         raise TypeError(f"{type(x).__name__} does not have a `transform()` method.")
 
+
 class make_column_selector(make_column_selector_sklearn):
     def __repr__(self):
         return f"make_column_selector(pattern={self.pattern}, dtype_include={self.dtype_include}, dtype_exclude={self.dtype_exclude})"
 
+
 def make_drop_transformer(
-    names: Optional[Union[str, Iterable[str]]]=None,
-    pattern: Optional[str]=None
+        names: Optional[Union[str, Iterable[str]]] = None,
+        pattern: Optional[str] = None
 ):
     """
     Returns a DataFrameTranformer (i.e. a ColumnTransformer) that drops a subset of features.
@@ -174,18 +198,18 @@ def make_drop_transformer(
     regex: the pattern to match for features to drop
     """
     kwargs = {
-        "remainder": "passthrough", # we specify which columns to drop, the rest stay.
-        "verbose_feature_names_out": False, # don't add the "remainder__" prefix to the undropped columns
+        "remainder": "passthrough",  # we specify which columns to drop, the rest stay.
+        "verbose_feature_names_out": False,  # don't add the "remainder__" prefix to the undropped columns
     }
     if names is None and pattern is None:
-        return DataFrameTransformer(transformers = [], **kwargs)
+        return DataFrameTransformer(transformers=[], **kwargs)
     if names and pattern:
         raise ValueError("Both names and regex defined for drop_transformer. Only one may be defined.")
 
     # regex part
     if pattern is not None:
         return DataFrameTransformer(
-            transformers = [
+            transformers=[
                 ("drop", "drop", make_column_selector(pattern))
             ],
             **kwargs
