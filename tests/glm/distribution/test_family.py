@@ -1,6 +1,7 @@
 import math
 import warnings
 from collections import namedtuple
+from dataclasses import dataclass
 from typing import Type, Optional, Collection
 from unittest.mock import Mock, patch, MagicMock
 
@@ -8,40 +9,75 @@ import pytest
 import torch.distributions
 
 from foundry.glm.family import Family
+from foundry.glm.family.family import _softmax_kp1
 
 from tests.glm.distribution.util import assert_dist_equal
 from tests.util import assert_tensors_equal
 
 
-@pytest.mark.parametrize(
-    ids=lambda *args: args[0],
-    argnames=['alias', 'call_input', 'expected_call_output'],
-    argvalues=[
-        (
-                'binomial',
-                {'probs': torch.tensor([0., 1.]).unsqueeze(-1)},
-                torch.distributions.Binomial(probs=torch.tensor([.5, 0.7311]).unsqueeze(-1)),
-        ),
-        (
-                'weibull',
-                {
+class TestFamily:
+    @dataclass
+    class Params:
+        alias: str
+        call_input: dict
+        expected_is_classifier: bool
+        expected_call_output: torch.distributions.Distribution
+
+    @dataclass
+    class Fixture:
+        family: Family
+        call_input: dict
+        expected_is_classifier: bool
+        expected_call_output: torch.distributions.Distribution
+
+    @pytest.fixture(
+        ids=lambda x: x.alias,
+        params=[
+            Params(
+                alias='binomial',
+                call_input={'probs': torch.tensor([0., 1.]).unsqueeze(-1)},
+                expected_is_classifier=True,
+                expected_call_output=torch.distributions.Binomial(probs=torch.tensor([.5, 0.7311]).unsqueeze(-1)),
+            ),
+            Params(
+                alias='negative_binomial',
+                call_input={
+                    'probs': torch.tensor([0., 1.]).unsqueeze(-1),
+                    'total_count': torch.tensor([0., 1.]).unsqueeze(-1)
+                },
+                expected_is_classifier=False,
+                expected_call_output=torch.distributions.NegativeBinomial(
+                    probs=torch.tensor([.5, 0.7311]).unsqueeze(-1),
+                    total_count=torch.tensor([1., math.e]).unsqueeze(-1)
+                ),
+            ),
+            Params(
+                alias='weibull',
+                call_input={
                     'scale': torch.tensor([0., 1.]).unsqueeze(-1),
                     'concentration': torch.tensor([0., 0.]).unsqueeze(-1)
                 },
-                torch.distributions.Weibull(
+                expected_is_classifier=False,
+                expected_call_output=torch.distributions.Weibull(
                     scale=torch.tensor([1., math.exp(1.)]).unsqueeze(-1),
                     concentration=torch.ones(2).unsqueeze(-1)
                 ),
-        ),
-    ]
-)
-def test_family_call(alias: str, call_input: dict, expected_call_output: torch.distributions.Distribution):
-    """
-    Calling a family instance w/tensors passes the tensors thru ilinks and creates a torch distribution
-    """
-    family = Family.from_name(name=alias)
-    call_output = family(**call_input)
-    assert_dist_equal(call_output, expected_call_output)
+            ),
+        ])
+    def setup(self, request):
+        return self.Fixture(
+            family=Family.from_name(name=request.param.alias),
+            call_input=request.param.call_input,
+            expected_call_output=request.param.expected_call_output,
+            expected_is_classifier=request.param.expected_is_classifier
+        )
+
+    def test_is_classifier(self, setup: Fixture):
+        assert setup.family.is_classifier == setup.expected_is_classifier
+
+    def test_call_output(self, setup: Fixture):
+        call_output = setup.family(**setup.call_input)
+        assert_dist_equal(call_output, setup.expected_call_output)
 
 
 class TestFamilyLogCdf:
@@ -172,3 +208,15 @@ def test__validate_values(input: tuple,
         value, weights = Family._validate_values(*input, distribution=torch_distribution)
         assert_tensors_equal(value, expected_output[0])
         assert_tensors_equal(weights, expected_output[1])
+
+
+@pytest.mark.parametrize(
+    argnames=["input", "expected_output"],
+    argvalues=[
+        (torch.tensor([0., 0.]), torch.tensor([.3333, .3333, 0.3333])),
+        (torch.tensor([0.]), torch.tensor([.5, .5])),
+        (torch.tensor([1.]), torch.tensor([.7311, .2689])),
+    ]
+)
+def test__softmax_kp1(input: torch.Tensor, expected_output: torch.Tensor):
+    assert_tensors_equal(_softmax_kp1(input), expected_output, tol=.0001)

@@ -10,8 +10,10 @@ import pandas as pd
 import torch
 import torch.nn
 from sklearn.base import BaseEstimator
+from sklearn.preprocessing import LabelEncoder
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
+from torch.distributions.constraints import simplex
 from tqdm import tqdm
 
 from foundry.glm.family import Family
@@ -59,6 +61,7 @@ class Glm(BaseEstimator):
         # set in _init_module:
         self._module_ = None
         self._module_param_names_ = None
+        self.label_encoder_ = None
         self.to_slice_dict_ = None
         self.module_num_outputs = None
 
@@ -112,7 +115,7 @@ class Glm(BaseEstimator):
         """
         self.family = self._init_family(self.family)
 
-        if self.is_classifier:
+        if self.family.is_classifier:
             # sklearn uses `hasattr` in some cases to check for `predict_proba`, so can't just
             # have it error out for some distributions -- need to add it dynamically.
             # noinspection PyAttributeOutsideInit
@@ -125,23 +128,34 @@ class Glm(BaseEstimator):
                 warn("`groups` argument will be ignored because self.penalty is a single value not a sequence.")
             return self._fit(X=X, y=y, sample_weight=sample_weight, **kwargs)
 
-    @property
-    def is_classifier(self) -> bool:
-        return hasattr(self.family.distribution_cls, 'probs')
-
     def _predict_proba(self,
                        X: ModelMatrix,
                        kwargs_as_is: Union[bool, dict] = False,
                        **kwargs) -> np.ndarray:
         """
-        Return the probability of each class, handling the drop-one-class behavior.
+        Return the probability of each class.
         """
-        assert self.is_classifier
-        preds = self.predict(X=X, type='probs', kwargs_as_is=kwargs_as_is, **kwargs)
-        last_class = 1 - preds.sum(axis=1, keepdims=True)
-        preds = np.concatenate([preds, last_class], axis=1)
-        assert np.allclose(preds.sum(axis=1), 1.0)  # TODO: is this too stringent when there are many classes?
-        return preds
+        assert self.family.is_classifier
+        probs = self.predict(X=X, type='probs', kwargs_as_is=kwargs_as_is, **kwargs)
+
+        # pytorch distributions can vary in behavior: e.g. bern/binom output a single prediction for 2-classes,
+        # while categorical/multinomial output a final dim whose extent is equal to the number of classes
+        assert len(probs.shape) == 2
+        expected_num_classes = len(self.label_encoder_.classes_)
+        if probs.shape[-1] == 1 and expected_num_classes > 1:
+            # handle bern/binom
+            if expected_num_classes != 2:
+                raise RuntimeError(
+                    f"There are {expected_num_classes} ``self.label_encoder_.classes_``, but distribution "
+                    f"``probs.shape[-1]`` is {probs.shape[-1]}"
+                )
+            assert (0 <= probs <= 1).all()
+            probs = np.concatenate([1 - probs, probs], axis=1)
+            probs /= probs.sum(axis=1, keepdims=True)
+        else:
+            assert probs.shape[-1] == expected_num_classes
+
+        return probs
 
     @staticmethod
     def family_aliases() -> dict:
@@ -333,20 +347,18 @@ class Glm(BaseEstimator):
                 raise NotImplementedError(
                     f"Unclear how to handle {k}, please report this error to the package maintainer"
                 )
+
+            # special handling for classification:
+            if self.family.is_classifier and k == 'value':
+                ydict['value'] = self.label_encoder_.transform(ydict['value'])
+                ydict['value'] = to_tensor(ydict['value'], dtype='int', device=_to_kwargs['device'])
+                continue
+
+            # standard handling:
             ydict[k] = to_2d(to_tensor(ydict[k], **_to_kwargs))
             # note: no `is_invalid` check, some families might support missing values or infs
             if ydict[k].shape[0] != y_len:
                 raise ValueError(f"{k}.shape[0] does not match y.shape[0]")
-
-        # make sure y has expected number of dims.
-        # this is complicated by how classification is handled, where multi-class classification involves
-        # ``n_classes-1`` module outputs.
-        drop_one_col = self.is_classifier & (self.module_num_outputs > 1)
-        expected_y_ncols = self.module_num_outputs + int(drop_one_col)
-        if ydict['value'].shape[1] != expected_y_ncols:
-            raise ValueError(f"Expected `y` to be array with ncols={expected_y_ncols}, got shape `{y.shape}`.")
-        if drop_one_col:
-            ydict['value'] = ydict['value'][:, :-1]
 
         return ydict
 
@@ -395,11 +407,17 @@ class Glm(BaseEstimator):
         y = to_2d(np.asanyarray(y))
 
         # determine output dim:
-        self.module_num_outputs = y.shape[1]
-        # if a classifier, then we want to avoid over-parameterization when it's a multi-class problem, but also
-        # support the much more common pattern of passing a vector of 1/0s in the case of binary classification
-        if self.is_classifier and self.module_num_outputs > 1:
-            self.module_num_outputs -= 1
+        if self.family.is_classifier:
+            if y.shape[-1] == 1:
+                self.label_encoder_ = LabelEncoder()
+                self.label_encoder_.fit(y)
+                assert len(self.label_encoder_.classes_) > 1
+                self.module_num_outputs = len(self.label_encoder_.classes_) - 1
+            else:
+                # TODO: support one-hot-encoded `y`, or (for multinomial) 2d `y` with tallies for each class
+                raise NotImplementedError
+        else:
+            self.module_num_outputs = y.shape[1]
 
         self._module_param_names_ = {}
         self.module_ = torch.nn.ModuleDict()
@@ -475,7 +493,7 @@ class Glm(BaseEstimator):
     @torch.no_grad()
     def predict(self,
                 X: ModelMatrix,
-                type: str = 'mean',
+                type: Optional[str] = None,
                 kwargs_as_is: Union[bool, dict] = False,
                 **kwargs) -> np.ndarray:
         """
@@ -483,8 +501,8 @@ class Glm(BaseEstimator):
 
         :param X: An array or dictionary of arrays.
         :param type: The type of the prediction -- i.e. the attribute to be extracted from the resulting
-         ``torch.Distribution``. The default depends on the ``is_classifier`` attribute of this ``Glm``: if a
-         classifier, then will return the index of the predicted class; if not, then default `type='mean'`.
+         ``torch.Distribution``. The default depends on the ``family.is_classifier`` attribute of this ``Glm``: if a
+         classifier, then will return the predicted class; if not, then default `type='mean'`.
         :param kwargs_as_is: If the ``type`` is callable, then kwargs that are arrays will be converted to tensors,
          and if 1D then will be unsqueezed to 2D (unsqueezing is to avoid accidental broadcasting, wherein (e.g.) a
          distribution with batch_shape of N*1 receives a ``value`` w/shape (N,1), resulting in a (N,N) tensor,
@@ -493,9 +511,10 @@ class Glm(BaseEstimator):
         :return: A ndarray of predictions.
         """
         if type is None:
-            if self.is_classifier:
+            if self.family.is_classifier:
                 probs = self.predict_proba(X, kwargs_as_is=kwargs_as_is, **kwargs)
-                return probs.argmax(axis=1)
+                class_idxs = probs.argmax(axis=1)
+                return self.label_encoder_.inverse_transform(class_idxs)
             else:
                 type = 'mean'
 

@@ -302,7 +302,7 @@ class TestBuildModelMats:
 
 class TestInit_Module:
     # TODO: this test needs to be split into multiple tests and partially rewritten:
-    #   - half the test is testing that `to_slice_dict_` was intialized properly
+    #   - half the test is testing that `to_slice_dict_` was initialized properly
     #   - testing this^ by checking if it behaves properly; instead should test that its init method got correct args
     #   - not mocking `module_factory`
     @pytest.fixture()

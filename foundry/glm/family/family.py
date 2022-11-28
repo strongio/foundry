@@ -9,6 +9,18 @@ from .util import log1mexp
 from foundry.util import to_2d, is_invalid
 
 
+def _softmax_kp1(x: torch.Tensor) -> torch.Tensor:
+    """
+    Given logits corresponding to the probabilities of K classes, convert to class-probabilities for K+1 classes.
+
+    :param x: A tensor of logits whose final dim indexes the class
+    :return: A tensor of probs with the same shape as the input, except the last dim is one longer.
+    """
+    *leading_dims, n_classes = x.shape
+    x_p1 = torch.cat([x, torch.zeros(*leading_dims, 1, dtype=x.dtype, device=x.device)], -1)
+    return torch.softmax(x_p1, -1)
+
+
 class Family:
     """
     Combines a link-function and a torch family for use in a GLM.
@@ -18,13 +30,18 @@ class Family:
             distributions.Binomial,
             {'probs': transforms.SigmoidTransform()},
         ),
+        'categorical': (
+            distributions.Categorical,
+            {'probs': _softmax_kp1}
+        ),
         'poisson': (
             distributions.Poisson,
             {'rate': transforms.ExpTransform()}
         ),
         'negative_binomial': (
             distributions.NegativeBinomial,
-            {'probs': transforms.SigmoidTransform(), 'total_count': transforms.ExpTransform()}
+            {'probs': transforms.SigmoidTransform(), 'total_count': transforms.ExpTransform()},
+            False
         ),
         'exponential': (
             torch.distributions.Exponential,
@@ -55,9 +72,16 @@ class Family:
 
     def __init__(self,
                  distribution_cls: Type[torch.distributions.Distribution],
-                 params_and_links: Dict[str, Callable]):
+                 params_and_links: Dict[str, Callable],
+                 is_classifier: Optional[bool] = None):
         self.distribution_cls = distribution_cls
         self.params_and_links = params_and_links
+        has_probs_attr = hasattr(self.distribution_cls, 'probs')
+        if is_classifier is None:
+            is_classifier = has_probs_attr
+        if is_classifier and not has_probs_attr:
+            raise TypeError(f"`is_classifier=True`, but {self.distribution_cls.__name__} doesn't have a `probs` attr.")
+        self.is_classifier = is_classifier
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.distribution_cls.__name__})"
