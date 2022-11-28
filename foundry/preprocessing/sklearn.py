@@ -46,9 +46,9 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
     :param interactions: A list of tuples. Each contains either (1) a column-name, (2) a 'column-selector' like
      ``sklearn.compose.make_column_selector()`` that takes a model-matrix and returns a list of column-names.
     :param sep: The separator between colnames in the outputted columns.
-    :param no_selection_handling: If an element of ``interactions`` is a column-selector, and it returns no columns,
-     how should this be handled? The default 'raise' will throw an exception, 'warn' will emit a warning, and 'ignore'
-     will ignore.
+    :param no_selection_handling: During fit, if an element of ``interactions`` is not in the input (or is a
+     column-selector and it returns no columns), how should this be handled? The default 'raise' will throw an
+     exception, 'warn' will emit a warning, and 'ignore' will ignore.
     """
 
     def __init__(
@@ -63,6 +63,7 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
         self.no_selection_handling = no_selection_handling
 
     def fit(self, X: pd.DataFrame, y=None) -> 'InteractionFeatures':
+        assert not X.empty
         self.no_selection_handling = self.no_selection_handling.lower()
         assert self.no_selection_handling in {'raise', 'warn', 'ignore'}
 
@@ -75,12 +76,19 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
                     any_callables = True
                     to_unroll[i] = col(X)
                     if not to_unroll[i]:
-                        msg = f"self.interactions[{int_idx}][{i}] is a callable that returned no columns"
+                        _repr = f'({col}) ' if '<' not in repr(col) else ''
+                        msg = f"`interactions[{int_idx}][{i}]` {_repr}is a callable that returned no columns"
                         if self.no_selection_handling == 'raise':
                             raise RuntimeError(msg)
                         if self.no_selection_handling == 'warn':
                             warn(msg)
                 elif isinstance(col, str):
+                    if col not in X.columns:
+                        msg = f"{col} not in X.columns"
+                        if self.no_selection_handling == 'raise':
+                            raise RuntimeError(msg)
+                        if self.no_selection_handling == 'warn':
+                            warn(msg)
                     to_unroll[i] = [col]
                 else:
                     raise ValueError(f"Expected {col} to be str or callable, got {type(col)}")

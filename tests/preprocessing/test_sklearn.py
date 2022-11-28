@@ -1,3 +1,4 @@
+from typing import Union, Type
 from unittest.mock import create_autospec
 
 import pandas as pd
@@ -38,8 +39,7 @@ def small_dataframe():
         ),
         pytest.param(
             {"names": "A", "pattern": ".*"},
-            None,
-            marks=pytest.mark.xfail(raises=ValueError)
+            ValueError
         ),
     ],
     ids=[
@@ -51,13 +51,13 @@ def small_dataframe():
     ]
 )
 def test_make_drop_transformer(small_dataframe, kwargs, expected):
-    my_pipeline = make_pipeline(
-        make_drop_transformer(**kwargs)
-    )
-
-    test = my_pipeline.fit(small_dataframe).transform(small_dataframe)
-
-    assert_frame_equal(expected, test)
+    if isinstance(expected, pd.DataFrame):
+        my_drop_transformer = make_drop_transformer(**kwargs)
+        test = my_drop_transformer.fit(small_dataframe).transform(small_dataframe)
+        assert_frame_equal(expected, test)
+    else:
+        with pytest.raises(expected):
+            make_drop_transformer(**kwargs)
 
 
 def test_make_column_selector():
@@ -73,6 +73,7 @@ def test_make_column_selector():
 
 
 class TestInteractionFeatures:
+    x_data = {f'col{i}': [1] for i in range(1, 5)}
 
     @pytest.mark.parametrize(
         argnames=['interactions', 'expected'],
@@ -83,20 +84,30 @@ class TestInteractionFeatures:
                 id='simple'
             ),
             pytest.param(
+                [('col1', 'col50')],
+                RuntimeError,
+                id='not-present',
+            ),
+            pytest.param(
                 [('col1', lambda x: ['col2', 'col3']), ('col1', 'col4')],
                 [('col1', 'col2'), ('col1', 'col3'), ('col1', 'col4')],
                 id='with_callable'
             ),
             pytest.param(
-                [('col1', lambda x: [])],
-                None,
+                [('col1', make_column_selector(pattern='unmatched'))],
+                RuntimeError,
                 id='callable_returns_nothing',
-                marks=pytest.mark.xfail(raises=RuntimeError)
             ),
         ]
     )
-    def test_fit(self, interactions: list, expected: list):
-        assert InteractionFeatures(interactions=interactions).fit(X=None).unrolled_interactions_ == expected
+    def test_fit(self, interactions: list, expected: Union[list, Type[Exception]]):
+        X = pd.DataFrame(self.x_data)
+        estimator = InteractionFeatures(interactions=interactions, no_selection_handling='raise')
+        if isinstance(expected, list):
+            assert estimator.fit(X=X).unrolled_interactions_ == expected
+        else:
+            with pytest.raises(expected):
+                estimator.fit(X=X)
 
     @pytest.mark.parametrize(
         argnames=['unrolled_interactions', 'x_cols', 'expected'],
@@ -116,9 +127,8 @@ class TestInteractionFeatures:
             pytest.param(
                 [('col1', 'colX')],
                 ['col1', 'col2', 'col3', 'col4'],
-                None,
-                id='missing',
-                marks=pytest.mark.xfail(raises=RuntimeError)
+                RuntimeError,
+                id='missing'
             ),
             pytest.param(
                 [('col1', 'col2')],
@@ -128,10 +138,14 @@ class TestInteractionFeatures:
             ),
         ]
     )
-    def test_transform(self, unrolled_interactions: list, x_cols: list, expected: list):
+    def test_transform(self, unrolled_interactions: list, x_cols: list, expected: Union[list, Type[Exception]]):
         instance = create_autospec(InteractionFeatures, instance=True)
         instance.sep = ":"
         instance.unrolled_interactions_ = unrolled_interactions
 
         X = pd.DataFrame(columns=x_cols)
-        assert InteractionFeatures.transform(instance, X=X).columns.tolist() == expected
+        if isinstance(expected, list):
+            assert InteractionFeatures.transform(instance, X=X).columns.tolist() == expected
+        else:
+            with pytest.raises(expected):
+                InteractionFeatures.transform(instance, X=X)
