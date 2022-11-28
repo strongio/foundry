@@ -1,13 +1,14 @@
 from collections import namedtuple
 from dataclasses import dataclass
 from typing import Optional, Dict, Sequence, Type
-from unittest.mock import Mock, PropertyMock, patch
+from unittest.mock import Mock, PropertyMock, patch, create_autospec
 
 import numpy as np
 import pandas as pd
 import pytest
 import torch
 from sklearn.exceptions import NotFittedError
+from sklearn.preprocessing import LabelEncoder
 from torch.distributions import constraints, identity_transform
 
 from foundry.glm.family import Family
@@ -36,7 +37,7 @@ def fake_family() -> Family:
     )
 
 
-class TestPredictProba:
+class TestClassifierPredict:
     @pytest.mark.parametrize(
         argnames=['family_nm', 'expected'],
         argvalues=[
@@ -56,35 +57,50 @@ class TestPredictProba:
         assert hasattr(glm, 'predict_proba') == expected
 
     def test_method(self):
-        """
-        Make sure predict_proba uses the `probs` attribute correctly
-        """
         family = Family(
             distribution_cls=torch.distributions.Binomial,
             params_and_links={'probs': torch.distributions.transforms.identity_transform}
         )
         glm = Glm(family=family)
+        # mock label-encoder:
+        glm.label_encoder_ = create_autospec(LabelEncoder, instance=True)
+        glm.label_encoder_.classes_ = [0, 1]
+        # mock _fit, so that fit() just calls init_family etc.:
         glm._fit = Mock(glm._fit, autospec=True)
-        glm.fit(X=None, y=None)
+        # mock build model-mats, we won't be using inputs:
         glm._build_model_mats = Mock(glm._build_model_mats, autospec=True)
         glm._build_model_mats.return_value = {}, None, None
+        # mock get_dist_kwargs, we want to control the output:
         glm._get_dist_kwargs = Mock(glm._get_dist_kwargs, autospec=True)
         glm._get_dist_kwargs.return_value = {
             'probs': to_2d(torch.tensor([.1, .9, .1, .9])),
             'total_count': to_2d(torch.tensor([1, 1, 2, 2]))
         }
+        #
+        glm.fit(X=None, y=None)
         preds = glm.predict_proba(X=None)
         assert len(preds.shape) == 2
         assert preds.shape[1] == 2
+        # first col is p(y=0):
         np.testing.assert_array_equal(
             preds[:, [0]],
-            glm._get_dist_kwargs.return_value['probs']
-        )
-        np.testing.assert_array_equal(
-            preds[:, [1]],
             1 - glm._get_dist_kwargs.return_value['probs']
         )
-        # bonus: make sure standard predict _doesnt_ use probs
+        # second col is p(y=1):
+        np.testing.assert_array_equal(
+            preds[:, [1]],
+            glm._get_dist_kwargs.return_value['probs']
+        )
+
+        # make sure default behavior of predict is to choose classes with highest probability
+        glm.predict(X=None)
+        glm.label_encoder_.inverse_transform.assert_called_once()
+        np.testing.assert_array_equal(
+            glm.label_encoder_.inverse_transform.call_args_list[0][0],
+            np.array([[0, 1, 0, 1]])
+        )
+
+        # make sure predict with `mean` works as expected:
         np.testing.assert_array_equal(
             glm.predict(X=None, type='mean'),
             glm._get_dist_kwargs.return_value['probs'] * glm._get_dist_kwargs.return_value['total_count']

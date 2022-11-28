@@ -149,7 +149,7 @@ class Glm(BaseEstimator):
                     f"There are {expected_num_classes} ``self.label_encoder_.classes_``, but distribution "
                     f"``probs.shape[-1]`` is {probs.shape[-1]}"
                 )
-            assert (0 <= probs <= 1).all()
+            assert np.all((probs >= 0) & (probs <= 1))
             probs = np.concatenate([1 - probs, probs], axis=1)
             probs /= probs.sum(axis=1, keepdims=True)
         else:
