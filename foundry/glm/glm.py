@@ -13,7 +13,6 @@ from sklearn.base import BaseEstimator
 from sklearn.preprocessing import LabelEncoder
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
-from torch.distributions.constraints import simplex
 from tqdm import tqdm
 
 from foundry.glm.family import Family
@@ -63,7 +62,6 @@ class Glm(BaseEstimator):
         self._module_param_names_ = None
         self.label_encoder_ = None
         self.to_slice_dict_ = None
-        self.module_num_outputs = None
 
         # laplace params:
         self._coef_mvnorm_ = None
@@ -196,7 +194,7 @@ class Glm(BaseEstimator):
             if self._module_ is not None and verbose:
                 warn("Resetting module with reset=True")
             # initialize module:
-            self.module_ = self._init_module(X, y)
+            self._init_module(X, y)
 
         # optimizer:
         self.optimizer_ = self._init_optimizer()
@@ -402,36 +400,41 @@ class Glm(BaseEstimator):
         self.to_slice_dict_ = ToSliceDict(mapping=col_mapping)
         X = self.to_slice_dict_.fit_transform(X)
 
+        # if classification, handle label encoding:
         if isinstance(y, dict):
             y = y['value']
         y = to_2d(np.asanyarray(y))
-
-        # determine output dim:
         if self.family.is_classifier:
             if y.shape[-1] == 1:
                 self.label_encoder_ = LabelEncoder()
                 self.label_encoder_.fit(y)
                 assert len(self.label_encoder_.classes_) > 1
-                self.module_num_outputs = len(self.label_encoder_.classes_) - 1
             else:
                 # TODO: support one-hot-encoded `y`, or (for multinomial) 2d `y` with tallies for each class
                 raise NotImplementedError
-        else:
-            self.module_num_outputs = y.shape[1]
 
+        # create modules that predict params:
         self._module_param_names_ = {}
         self.module_ = torch.nn.ModuleDict()
         for dp in self.family.params:
             Xp = X.get(dp, None)
+            module_num_outputs = self._get_module_num_outputs(y, dp)
             if Xp is None or not Xp.shape[1]:
                 # always use the base approach when no input features:
-                module, nms = Glm.module_factory(X=None, output_dim=self.module_num_outputs)
+                module, nms = Glm.module_factory(X=None, output_dim=module_num_outputs)
             else:
-                module, nms = self.module_factory(X=Xp, output_dim=self.module_num_outputs)
+                module, nms = self.module_factory(X=Xp, output_dim=module_num_outputs)
             self.module_[dp] = module
             self._module_param_names_[dp] = {k: np.asarray(v) for k, v in nms.items()}
 
-        return self.module_
+    def _get_module_num_outputs(self, y: np.ndarray, dist_param_name: str) -> int:
+        assert len(y.shape) == 2
+        if self.label_encoder_ is not None:
+            # classification
+            return len(self.label_encoder_.classes_) - 1
+        else:
+            # regression:
+            return y.shape[1]
 
     @classmethod
     def module_factory(cls,
@@ -479,7 +482,7 @@ class Glm(BaseEstimator):
     def _init_pb(self) -> Optional[tqdm]:
         max_eval = self.optimizer_.param_groups[0].get('max_eval', False)
         if max_eval:
-            return tqdm(total=self.optimizer_.param_groups[0]['max_eval'])
+            return tqdm(total=max_eval)
         return None
 
     @torch.no_grad()

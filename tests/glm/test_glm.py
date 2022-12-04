@@ -119,8 +119,6 @@ class TestBuildModelMats:
         glm.module_.dtype = torch.get_default_dtype()
         glm.module_.device = torch.device('cpu')
 
-        glm.module_num_outputs = 1
-
         return glm
 
     @dataclass
@@ -274,8 +272,6 @@ class TestBuildModelMats:
         ]
     )
     def setup(self, glm: Glm, request: 'FixtureRequest') -> Fixture:
-        if request.param.expected_ydict:
-            glm.module_num_outputs = request.param.expected_ydict['value'].shape[1]
 
         # call, capturing exceptions if they're expected:
         exception = None
@@ -388,7 +384,7 @@ class TestInit_Module:
             with pytest.raises(expected_exception):
                 glm._init_module(X=X, y=y)
         else:
-            glm.module_ = glm._init_module(X=X, y=y)
+            glm._init_module(X=X, y=y)
             result_sd_shapes = {k: v.shape for k, v in glm.module_.state_dict().items()}
             expected_result_sd_shapes = {k: v.shape for k, v in expected_result.state_dict().items()}
             assert result_sd_shapes == expected_result_sd_shapes
@@ -454,7 +450,7 @@ def test_log_prob(value: torch.Tensor,
     y = {'value': value}
     if weight is not None:
         y['weight'] = weight
-    glm._module_ = glm._init_module({}, y=y)
+    glm._init_module({}, y=y)
 
     # call get_log_prob:
     mm_dict, lp_dict = glm._build_model_mats(X={}, y=y, include_y=True)
