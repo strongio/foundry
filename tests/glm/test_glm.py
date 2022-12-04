@@ -71,8 +71,8 @@ class TestClassifierPredict:
         glm._build_model_mats = Mock(glm._build_model_mats, autospec=True)
         glm._build_model_mats.return_value = {}, None, None
         # mock get_dist_kwargs, we want to control the output:
-        glm._get_dist_kwargs = Mock(glm._get_dist_kwargs, autospec=True)
-        glm._get_dist_kwargs.return_value = {
+        glm._get_family_kwargs = Mock(glm._get_family_kwargs, autospec=True)
+        glm._get_family_kwargs.return_value = {
             'probs': to_2d(torch.tensor([.1, .9, .1, .9])),
             'total_count': to_2d(torch.tensor([1, 1, 2, 2]))
         }
@@ -84,12 +84,12 @@ class TestClassifierPredict:
         # first col is p(y=0):
         np.testing.assert_array_equal(
             preds[:, [0]],
-            1 - glm._get_dist_kwargs.return_value['probs']
+            1 - glm._get_family_kwargs.return_value['probs']
         )
         # second col is p(y=1):
         np.testing.assert_array_equal(
             preds[:, [1]],
-            glm._get_dist_kwargs.return_value['probs']
+            glm._get_family_kwargs.return_value['probs']
         )
 
         # make sure default behavior of predict is to choose classes with highest probability
@@ -103,7 +103,7 @@ class TestClassifierPredict:
         # make sure predict with `mean` works as expected:
         np.testing.assert_array_equal(
             glm.predict(X=None, type='mean'),
-            glm._get_dist_kwargs.return_value['probs'] * glm._get_dist_kwargs.return_value['total_count']
+            glm._get_family_kwargs.return_value['probs'] * glm._get_family_kwargs.return_value['total_count']
         )
 
 

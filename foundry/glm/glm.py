@@ -277,14 +277,14 @@ class Glm(BaseEstimator):
         """
         Get the penalized log prob, applying weights as needed.
         """
-        log_probs = self.family.log_prob(self.family(**self._get_dist_kwargs(**x_dict)), **lp_dict)
+        log_probs = self.family.log_prob(self.family(**self._get_family_kwargs(**x_dict)), **lp_dict)
         penalty = self._get_penalty() if include_penalty else 0.
         log_prob = log_probs.sum() - penalty
         if mean:
             log_prob = log_prob / lp_dict['weight'].sum()
         return log_prob
 
-    def _get_dist_kwargs(self, **kwargs) -> dict:
+    def _get_family_kwargs(self, **kwargs) -> dict:
         """
         Call each entry in the module_ dict to get predicted family params. Any leftover keywords are passed as-is.
         """
@@ -524,7 +524,7 @@ class Glm(BaseEstimator):
         x_dict, *_ = self._build_model_mats(X=X, y=None)
         if 'validate_args' in kwargs:
             x_dict['validate_args'] = kwargs.pop('validate_args')
-        dist_kwargs = self._get_dist_kwargs(**x_dict)
+        dist_kwargs = self._get_family_kwargs(**x_dict)
         dist = self.family(**dist_kwargs)
         result = getattr(dist, type)
         if callable(result):
