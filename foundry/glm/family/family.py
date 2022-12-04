@@ -3,72 +3,18 @@ from warnings import warn
 
 import torch
 from torch import distributions
-from torch.distributions import transforms
 
 from .util import log1mexp
 from foundry.util import to_2d, is_invalid
 
 
-def _softmax_kp1(x: torch.Tensor) -> torch.Tensor:
-    """
-    Given logits corresponding to the probabilities of K classes, convert to class-probabilities for K+1 classes.
 
-    :param x: A tensor of logits whose final dim indexes the class
-    :return: A tensor of probs with the same shape as the input, except the last dim is one longer.
-    """
-    *leading_dims, n_classes = x.shape
-    x_p1 = torch.cat([x, torch.zeros(*leading_dims, 1, dtype=x.dtype, device=x.device)], -1)
-    return torch.softmax(x_p1, -1)
 
 
 class Family:
     """
     Combines a link-function and a torch family for use in a GLM.
     """
-    aliases = {
-        'binomial': (
-            distributions.Binomial,
-            {'probs': transforms.SigmoidTransform()},
-        ),
-        'categorical': (
-            distributions.Categorical,
-            {'probs': _softmax_kp1}
-        ),
-        'poisson': (
-            distributions.Poisson,
-            {'rate': transforms.ExpTransform()}
-        ),
-        'negative_binomial': (
-            distributions.NegativeBinomial,
-            {'probs': transforms.SigmoidTransform(), 'total_count': transforms.ExpTransform()},
-            False
-        ),
-        'exponential': (
-            torch.distributions.Exponential,
-            {
-                'rate': transforms.ExpTransform(),
-            }
-        ),
-        'weibull': (
-            torch.distributions.Weibull,
-            {
-                'scale': transforms.ExpTransform(),
-                'concentration': transforms.ExpTransform()
-            }
-        ),
-        'gaussian': (
-            torch.distributions.Normal,
-            {
-                'loc': transforms.identity_transform,
-                'scale': transforms.ExpTransform()
-            }
-        )
-    }
-
-    @classmethod
-    def from_name(cls, name: str, **kwargs) -> 'Family':
-        args = cls.aliases[name]
-        return cls(*args, **kwargs)
 
     def __init__(self,
                  distribution_cls: Type[torch.distributions.Distribution],

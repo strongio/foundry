@@ -1,13 +1,13 @@
 from collections import namedtuple
 from dataclasses import dataclass
 from typing import Optional, Dict, Sequence, Type
-from unittest.mock import Mock, PropertyMock, patch, create_autospec
+from unittest.mock import Mock, create_autospec
 
 import numpy as np
 import pandas as pd
 import pytest
 import torch
-from sklearn.exceptions import NotFittedError
+
 from sklearn.preprocessing import LabelEncoder
 from torch.distributions import constraints, identity_transform
 
@@ -49,7 +49,7 @@ class TestClassifierPredict:
         """
         method should only exist in instances if their distribution has 'probs'
         """
-        family = Family.from_name(family_nm)
+        family = Glm._init_family(Glm, family_nm)
         glm = Glm(family=family)
         glm._fit = Mock(glm._fit, autospec=True)
         glm.fit(X=None, y=None)
