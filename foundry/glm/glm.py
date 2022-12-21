@@ -1,5 +1,4 @@
 import os
-from functools import partial
 
 from time import sleep
 from typing import Union, Sequence, Optional, Callable, Tuple, Dict
@@ -7,15 +6,19 @@ from warnings import warn
 
 import numpy as np
 import pandas as pd
+
 import torch
 import torch.nn
+from torch import distributions
+from torch.distributions import transforms
+
 from sklearn.base import BaseEstimator
 from sklearn.preprocessing import LabelEncoder
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from tqdm import tqdm
 
-from foundry.glm.family import Family
+from foundry.glm.family import Family, CeilingWeibull
 from foundry.glm.family.survival import SurvivalFamily
 from foundry.glm.util import NoWeightModule, Stopping
 from foundry.hessian import hessian
@@ -29,10 +32,23 @@ N_FIT_RETRIES = int(os.getenv('GLM_N_FIT_RETRIES', 10))
 from sklearn.exceptions import NotFittedError
 
 
+def _softmax_kp1(x: torch.Tensor) -> torch.Tensor:
+    """
+    Given logits corresponding to the probabilities of K classes, convert to class-probabilities for K+1 classes.
+
+    :param x: A tensor of logits whose final dim indexes the class
+    :return: A tensor of probs with the same shape as the input, except the last dim is one longer.
+    """
+    *leading_dims, n_classes = x.shape
+    x_p1 = torch.cat([x, torch.zeros(*leading_dims, 1, dtype=x.dtype, device=x.device)], -1)
+    return torch.softmax(x_p1, -1)
+
+
 class Glm(BaseEstimator):
     """
-    :param family: Either a :class:`foundry.glm.family.Family`, or a string alias. You can see available aliases with
-     ``Glm.family_aliases()``.
+    :param family: A family name; you can see available names with ``Glm.family_names``. (Advanced: you can also pass
+     the :class:`foundry.glm.family.Family` instead of a name). Some names can be prefixed with ``survival_`` for
+     support for censored data.
     :param penalty: A multiplier for L2 penalty on coefficients. Can be a single value, or a dictionary of these to
      support different penalties per distribution-parameter. Values can either be floats, or can be functions that take
      a ``torch.nn.Module`` as the first argument and that module's param-names as second argument, and returns a scalar
@@ -47,6 +63,53 @@ class Glm(BaseEstimator):
      columns, these can be functions that takes the data and return the relevant columns: e.g.
      ``col_mapping={'loc':sklearn.compose.make_column_selector('^col+.'), 'scale':[col1]}``.
     """
+    family_names = {
+        'binomial': (
+            distributions.Binomial,
+            {'probs': transforms.SigmoidTransform()},
+        ),
+        'categorical': (
+            distributions.Categorical,
+            {'probs': _softmax_kp1}
+        ),
+        'poisson': (
+            distributions.Poisson,
+            {'rate': transforms.ExpTransform()}
+        ),
+        'negative_binomial': (
+            distributions.NegativeBinomial,
+            {'probs': transforms.SigmoidTransform(), 'total_count': transforms.ExpTransform()},
+            False
+        ),
+        'exponential': (
+            torch.distributions.Exponential,
+            {
+                'rate': transforms.ExpTransform(),
+            }
+        ),
+        'weibull': (
+            torch.distributions.Weibull,
+            {
+                'scale': transforms.ExpTransform(),
+                'concentration': transforms.ExpTransform()
+            }
+        ),
+        'gaussian': (
+            torch.distributions.Normal,
+            {
+                'loc': transforms.identity_transform,
+                'scale': transforms.ExpTransform()
+            }
+        ),
+        'ceiling_weibull': (
+            CeilingWeibull,
+            {
+                'scale': transforms.ExpTransform(),
+                'concentration': transforms.ExpTransform(),
+                'ceiling': transforms.SigmoidTransform()
+            }
+        )
+    }
 
     def __init__(self,
                  family: Union[str, Family],
@@ -155,19 +218,13 @@ class Glm(BaseEstimator):
 
         return probs
 
-    @staticmethod
-    def family_aliases() -> dict:
-        out = Family.aliases.copy()
-        out.update({f'survival_{nm}': f for f, nm in SurvivalFamily.aliases.items()})
-        return out
-
-    @staticmethod
-    def _init_family(family: Union[Family, str]) -> Family:
+    def _init_family(self, family: Union[Family, str]) -> Family:
         if isinstance(family, str):
             if family.startswith('survival'):
-                family = SurvivalFamily.from_name(family.replace('survival', '').lstrip('_'))
+                family = family.replace('survival', '').lstrip('_')
+                return SurvivalFamily(*self.family_names[family])
             else:
-                family = Family.from_name(family)
+                return Family(*self.family_names[family])
         return family
 
     @retry(retry=retry_if_exception_type(FitFailedException), reraise=True, stop=stop_after_attempt(N_FIT_RETRIES + 1))
@@ -392,18 +449,15 @@ class Glm(BaseEstimator):
 
     def _init_module(self, X: ModelMatrix, y: ModelMatrix) -> torch.nn.ModuleDict:
         # memorize the col -> dist-param mapping
-        col_mapping = self.col_mapping
-        if col_mapping is None and not isinstance(X, dict):
-            # if col_mapping is None and they didn't pass a dict for X, default is use first family param
-            # otherwise use col_mapping as-is (if X is a dict, will be used by ToSliceDict)
-            col_mapping = [self.family.params[0]]
-        self.to_slice_dict_ = ToSliceDict(mapping=col_mapping)
-        X = self.to_slice_dict_.fit_transform(X)
+        self._init_col_mapping(X)
 
-        # if classification, handle label encoding:
+        # standardize X and y:
+        X = self.to_slice_dict_.transform(X)
         if isinstance(y, dict):
             y = y['value']
         y = to_2d(np.asanyarray(y))
+
+        # if classification, handle label encoding:
         if self.family.is_classifier:
             if y.shape[-1] == 1:
                 self.label_encoder_ = LabelEncoder()
@@ -426,6 +480,15 @@ class Glm(BaseEstimator):
                 module, nms = self.module_factory(X=Xp, output_dim=module_num_outputs)
             self.module_[dp] = module
             self._module_param_names_[dp] = {k: np.asarray(v) for k, v in nms.items()}
+
+    def _init_col_mapping(self, X: ModelMatrix):
+        col_mapping = self.col_mapping
+        if col_mapping is None and not isinstance(X, dict):
+            # if col_mapping is None and they didn't pass a dict for X, default is use first family param
+            # otherwise use col_mapping as-is (if X is a dict, will be used by ToSliceDict)
+            col_mapping = [self.family.params[0]]
+        self.to_slice_dict_ = ToSliceDict(mapping=col_mapping)
+        self.to_slice_dict_.fit(X)
 
     def _get_module_num_outputs(self, y: np.ndarray, dist_param_name: str) -> int:
         assert len(y.shape) == 2

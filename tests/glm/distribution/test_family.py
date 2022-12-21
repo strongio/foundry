@@ -8,8 +8,9 @@ from unittest.mock import Mock, patch, MagicMock
 import pytest
 import torch.distributions
 
+from foundry.glm import Glm
 from foundry.glm.family import Family
-from foundry.glm.family.family import _softmax_kp1
+from foundry.glm.glm import _softmax_kp1
 
 from tests.glm.distribution.util import assert_dist_equal
 from tests.util import assert_tensors_equal
@@ -66,7 +67,7 @@ class TestFamily:
         ])
     def setup(self, request):
         return self.Fixture(
-            family=Family.from_name(name=request.param.alias),
+            family=Glm._init_family(Glm, request.param.alias),
             call_input=request.param.call_input,
             expected_call_output=request.param.expected_call_output,
             expected_is_classifier=request.param.expected_is_classifier
