@@ -25,10 +25,10 @@ class DataFrameTransformer(ColumnTransformer):
     def _convert_single_transform_to_df(cls, X) -> pd.DataFrame:
         if sparse.issparse(X):
             warn(f"sparse output not suported in {cls.__name__}")
-            return X.toarray()
+            X = X.toarray()
         if isinstance(X, pd.DataFrame):
             X.reset_index(drop=True, inplace=True)
-        if not isinstance(X, pd.DataFrame):
+        else:
             X = pd.DataFrame(X)
         return X
 
