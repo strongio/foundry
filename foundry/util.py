@@ -112,6 +112,12 @@ def is_invalid(x: torch.Tensor, reduce: bool = True) -> bool:
         return torch.isinf(x) | torch.isnan(x)
 
 
+def transpose_last_dims(x: torch.Tensor) -> torch.Tensor:
+    args = list(range(len(x.shape)))
+    args[-2], args[-1] = args[-1], args[-2]
+    return x.permute(*args)
+
+
 class FitFailedException(RuntimeError):
     pass
 
