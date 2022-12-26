@@ -1,9 +1,11 @@
 import itertools
+import pdb
 from typing import Callable, Iterable, Optional, Sequence, Tuple, Union
 from warnings import warn
 
 import numpy as np
 import pandas as pd
+from pandas.core.arrays import SparseArray
 from scipy import sparse
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
@@ -24,8 +26,7 @@ class DataFrameTransformer(ColumnTransformer):
     @classmethod
     def _convert_single_transform_to_df(cls, X) -> pd.DataFrame:
         if sparse.issparse(X):
-            warn(f"sparse output not suported in {cls.__name__}")
-            X = X.toarray()
+            return pd.DataFrame.sparse.from_spmatrix(X)
         if isinstance(X, pd.DataFrame):
             X.reset_index(drop=True, inplace=True)
         else:
@@ -116,23 +117,44 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
         for interaction in self.unrolled_interactions_:
             if len(interaction) < 2:
                 continue
-            new_col = self.sep.join(interaction)
-            if new_col in X.columns and new_col not in available_cols:
-                warn(f"{new_col} is duplicated.")
-            # TODO: support non-numeric
-            new_cols[new_col] = 1.0
+            new_colname = self.sep.join(interaction)
+            if new_colname in X.columns and new_colname not in available_cols:
+                warn(f"{new_colname} is duplicated.")
+
+            new_cols[new_colname] = None
             for col in interaction:
                 if col not in available_cols:
                     raise RuntimeError(f"{col} in `interactions`, but not in columns:\n{available_cols}")
-                new_cols[new_col] *= X[col].values
+                new_cols[new_colname] = _sparse_safe_multiply(new_cols[new_colname], X[col].values)
 
         df_new_cols = pd.DataFrame(new_cols)
         df_new_cols.index = X.index
 
-        return pd.concat([
-            X.drop(columns=X.columns[X.columns.isin(new_cols)]),
-            df_new_cols
-        ], axis=1)
+        return X.drop(columns=X.columns[X.columns.isin(new_cols)]).join(df_new_cols)
+
+
+def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series):
+    if old_vals is None:
+        return new_vals.copy()
+
+    # TODO: this feels like it shouldn't be needed?
+    old_is_sparse = hasattr(old_vals, 'density')
+    new_is_sparse = hasattr(new_vals, 'density')
+
+    if new_is_sparse and old_is_sparse:
+        index_intersection = old_vals.sp_index.intersect(new_vals.sp_index)
+    elif new_is_sparse:
+        index_intersection = new_vals.sp_index
+    elif old_is_sparse:
+        index_intersection = old_vals.sp_index
+    else:
+        old_vals *= new_vals
+        return old_vals
+    product = (
+            old_vals[index_intersection.to_int_index().indices] *
+            new_vals[index_intersection.to_int_index().indices]
+    )
+    return SparseArray(data=product, sparse_index=index_intersection)
 
 
 class FunctionTransformer(FunctionTransformerBase):
