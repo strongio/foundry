@@ -8,9 +8,6 @@ from .util import log1mexp
 from foundry.util import to_2d, is_invalid
 
 
-
-
-
 class Family:
     """
     Combines a link-function and a torch family for use in a GLM.
@@ -19,15 +16,31 @@ class Family:
     def __init__(self,
                  distribution_cls: Type[torch.distributions.Distribution],
                  params_and_links: Dict[str, Callable],
-                 is_classifier: Optional[bool] = None):
+                 supports_predict_proba: Optional[bool] = None):
+        """
+
+        :param distribution_cls: A distribution class.
+        :param params_and_links: A dictionary whose keys are names of distribution-parameters (i.e. init-args for the
+         distribution-class and values are (inverse-)link functions.
+        :param supports_predict_proba: Does this distribution support predicting probabilities for its values? Default
+         is determined by whether the distribution has a ``probs`` attribute.
+        """
         self.distribution_cls = distribution_cls
         self.params_and_links = params_and_links
+
+        # supports_predict_proba:
         has_probs_attr = hasattr(self.distribution_cls, 'probs')
-        if is_classifier is None:
-            is_classifier = has_probs_attr
-        if is_classifier and not has_probs_attr:
-            raise TypeError(f"`is_classifier=True`, but {self.distribution_cls.__name__} doesn't have a `probs` attr.")
-        self.is_classifier = is_classifier
+        if supports_predict_proba is None:
+            supports_predict_proba = has_probs_attr
+        if supports_predict_proba and not has_probs_attr:
+            raise TypeError(
+                f"`supports_predict_proba=True`, but {self.distribution_cls.__name__} doesn't have a `probs` attr."
+            )
+        self.supports_predict_proba = supports_predict_proba
+
+        # if distribution has `total_count` (binomial/multinomial) then we can't fully support classification;
+        # e.g. it doesn't make sense to train on or predict classes b/c these don't capture heterogenous counts
+        self.has_total_count = hasattr(self.distribution_cls, 'total_count')
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.distribution_cls.__name__})"
