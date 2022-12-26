@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
-from sklearn import clone
 
 from sklearn.preprocessing import LabelEncoder
 from torch.distributions import constraints, identity_transform
@@ -17,6 +16,7 @@ from foundry.glm.glm import ModelMatrix, Glm, family_from_string
 from foundry.glm.util import NoWeightModule
 from foundry.survival import make_discrete_target
 from foundry.util import to_2d, ToSliceDict
+
 from tests.conftest import assert_dict_of_tensors_equal, assert_scalars_equal
 
 
@@ -113,6 +113,7 @@ def test_survival_integration(family: str, interval_censoring: bool):
     from foundry.glm.family.survival import SurvivalFamily
     assert isinstance(glm.family, SurvivalFamily)
     assert glm.converged_
+
 
 
 class _FakeDist:
