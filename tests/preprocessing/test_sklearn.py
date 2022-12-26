@@ -1,12 +1,15 @@
 from typing import Union, Type
 from unittest.mock import create_autospec
 
+import numpy as np
 import pandas as pd
 import pytest
+from pandas.core.arrays import SparseArray
 from pandas.testing import assert_frame_equal
-from sklearn.pipeline import make_pipeline
+from scipy.sparse import spmatrix, coo_matrix
+from sklearn.preprocessing import OneHotEncoder
 
-from foundry.preprocessing import make_drop_transformer, make_column_selector, InteractionFeatures
+from foundry.preprocessing import make_drop_transformer, make_column_selector, InteractionFeatures, DataFrameTransformer
 
 
 @pytest.fixture()
@@ -72,6 +75,32 @@ def test_make_column_selector():
     assert "[AB]" in repr(column_selector)
 
 
+class TestDataFrameTransformer:
+    @pytest.mark.parametrize(
+        argnames=['X', 'expected'],
+        argvalues=[
+            # resets index:
+            (pd.DataFrame({'x': [1, 2, 3]}, index=[1, 2, 3]), pd.DataFrame({'x': [1, 2, 3]})),
+            # convert numpy:
+            (np.zeros((3, 2)), pd.DataFrame(np.zeros((3, 2)))),
+            # convert sparse:
+            (
+                    OneHotEncoder(sparse=True).fit_transform([['a'], ['b'], ['c'], ['d']]),
+                    pd.DataFrame(np.eye(4))
+            )
+        ]
+    )
+    def test__convert_single_transform_to_df(self,
+                                             X: Union[np.ndarray, pd.DataFrame, spmatrix],
+                                             expected: pd.DataFrame):
+        result = DataFrameTransformer._convert_single_transform_to_df(X)
+        if isinstance(X, spmatrix):
+            assert hasattr(result, 'sparse')
+            assert result.sparse.density == .25
+            result = result.sparse.to_dense()
+        pd.testing.assert_frame_equal(result, expected)
+
+
 class TestInteractionFeatures:
     x_data = {f'col{i}': [1] for i in range(1, 5)}
 
@@ -110,7 +139,7 @@ class TestInteractionFeatures:
                 estimator.fit(X=X)
 
     @pytest.mark.parametrize(
-        argnames=['unrolled_interactions', 'x_cols', 'expected'],
+        argnames=['unrolled_interactions', 'X', 'expected'],
         argvalues=[
             pytest.param(
                 [('col1', 'col2')],
@@ -136,16 +165,53 @@ class TestInteractionFeatures:
                 ['col1', 'col2', 'col1:col2'],
                 id='pre-existing'
             ),
+            pytest.param(
+                [('a', 'b')],
+                pd.DataFrame({'a': SparseArray([1, 1, 0]),
+                              'b': SparseArray([1, 0, 1])}),
+                pd.DataFrame({'a': SparseArray([1, 1, 0]),
+                              'b': SparseArray([1, 0, 1]),
+                              'a:b': SparseArray([1, 0, 0])}),
+                id='sparse*sparse'
+            ),
+            pytest.param(
+                [('a', 'b')],
+                pd.DataFrame({'a': SparseArray([1, 1, 1]),
+                              'b': SparseArray([1, 0, 1])}),
+                pd.DataFrame({'a': SparseArray([1, 1, 1]),
+                              'b': SparseArray([1, 0, 1]),
+                              'a:b': SparseArray([1, 0, 1])}),
+                id='sparse*sparse2'
+            ),
+            pytest.param(
+                [('a', 'b')],
+                pd.DataFrame({'a': SparseArray([0, 1, 1]),
+                              'b': [.5, .5, .5]}),
+                pd.DataFrame({'a': SparseArray([0, 1, 1]),
+                              'b': [.5, .5, .5],
+                              'a:b': SparseArray([0, .5, .5])}),
+                id='sparse*dense'
+            )
         ]
     )
-    def test_transform(self, unrolled_interactions: list, x_cols: list, expected: Union[list, Type[Exception]]):
+    def test_transform(self,
+                       unrolled_interactions: list,
+                       X: Union[list, pd.DataFrame],
+                       expected: Union[list, pd.DataFrame, Type[Exception]]):
         instance = create_autospec(InteractionFeatures, instance=True)
         instance.sep = ":"
         instance.unrolled_interactions_ = unrolled_interactions
 
-        X = pd.DataFrame(columns=x_cols)
+        if isinstance(X, list):
+            X = pd.DataFrame(columns=X)
         if isinstance(expected, list):
-            assert InteractionFeatures.transform(instance, X=X).columns.tolist() == expected
+            expected = pd.DataFrame(columns=expected)
+
+        if isinstance(expected, pd.DataFrame):
+            result = InteractionFeatures.transform(instance, X=X)
+            pd.testing.assert_frame_equal(result, expected)
+            if hasattr(X, 'sparse'):
+                assert result['a:b'].sparse.density < 1
         else:
             with pytest.raises(expected):
                 InteractionFeatures.transform(instance, X=X)
