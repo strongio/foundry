@@ -6,7 +6,7 @@ from torch.distributions import Exponential, Weibull
 
 from foundry.glm.family import Family
 from foundry.glm.family.survival.distributions import weibull_log_surv, CeilingWeibull
-from tests.util import assert_scalars_equal, assert_tensors_equal
+from tests.conftest import assert_scalars_equal, assert_tensors_equal
 
 
 @pytest.mark.parametrize(
