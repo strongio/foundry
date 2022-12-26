@@ -189,7 +189,7 @@ class TestInteractionFeatures:
                               'b': [.5, .5, .5]}),
                 pd.DataFrame({'a': SparseArray([0, 1, 1]),
                               'b': [.5, .5, .5],
-                              'a:b': SparseArray([0, .5, .5])}),
+                              'a:b': SparseArray([0, .5, .5], fill_value=0.)}),
                 id='sparse*dense'
             )
         ]
