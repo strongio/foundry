@@ -1,6 +1,6 @@
 import torch
 
-from tests.util import assert_tensors_equal
+from tests.conftest import assert_tensors_equal
 
 
 def assert_dist_equal(x: torch.distributions.Distribution, y: torch.distributions.Distribution, tol: float = .001):

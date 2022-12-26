@@ -8,7 +8,7 @@ import torch
 from foundry.glm import Glm
 from foundry.glm.family.survival import SurvivalFamily
 
-from tests.util import assert_tensors_equal, assert_dict_of_tensors_equal
+from tests.conftest import assert_tensors_equal, assert_dict_of_tensors_equal
 
 
 @pytest.mark.parametrize(
