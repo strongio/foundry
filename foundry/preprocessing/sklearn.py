@@ -1,5 +1,4 @@
 import itertools
-import pdb
 from typing import Callable, Iterable, Optional, Sequence, Tuple, Union
 from warnings import warn
 
@@ -133,26 +132,23 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
         return X.drop(columns=X.columns[X.columns.isin(new_cols)]).join(df_new_cols)
 
 
-def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series) -> pd.ExtensionArray:
+def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series) -> Union[SparseArray, pd.Series]:
     if old_vals is None:
         return new_vals.copy()
 
     # because sparse-arrays allow for any fill-value, they don't leverage the fact that
     # sparse*sparse only needs to capture the intersection of the two; instead, they fill the union.
-    old_is_sparse = hasattr(old_vals, 'density')
-    new_is_sparse = hasattr(new_vals, 'density')
-
+    old_is_sparse = pd.api.types.is_sparse(old_vals)
+    new_is_sparse = pd.api.types.is_sparse(new_vals)
     if new_is_sparse and old_is_sparse:
         index_intersection = old_vals.sp_index.intersect(new_vals.sp_index)
-        fill_value = old_vals.fill_value
-        # TODO: allow promotion from bool or int -> float
-        assert new_vals.fill_value == old_vals.fill_value
+        assert new_vals.fill_value == old_vals.fill_value == 0
     elif new_is_sparse:
         index_intersection = new_vals.sp_index
-        fill_value = new_vals.fill_value
+        assert new_vals.fill_value == 0
     elif old_is_sparse:
         index_intersection = old_vals.sp_index
-        fill_value = old_vals.fill_value
+        assert old_vals.fill_value == 0
     else:
         old_vals *= new_vals
         return old_vals
@@ -160,7 +156,7 @@ def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series) -> pd.Extens
             old_vals[index_intersection.to_int_index().indices] *
             new_vals[index_intersection.to_int_index().indices]
     )
-    return SparseArray(data=product, sparse_index=index_intersection, fill_value=fill_value)
+    return SparseArray(data=product, sparse_index=index_intersection, fill_value=0.)
 
 
 class FunctionTransformer(FunctionTransformerBase):
