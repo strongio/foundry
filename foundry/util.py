@@ -25,10 +25,38 @@ def is_array(x) -> bool:
     return hasattr(x, '__array__')
 
 
-def to_tensor(x, **kwargs) -> torch.Tensor:
+def _safe_get_density(series: pd.Series) -> float:
+    try:
+        density = series.sparse.density
+    except AttributeError:
+        density = 1.
+    return density
+
+
+def to_tensor(x: Union[np.ndarray, torch.Tensor, pd.DataFrame],
+              sparse_threshold: float = 0.3,
+              **kwargs) -> torch.Tensor:
     """
-    Convert anything that ``np.asarray`` can handle into a tensor.
+    Convert anything that ``np.asarray`` can handle into a tensor; additionally handle dataframes with sparse arrays.
+
+    :param x: An array, tensor, dataframe, or anything that ``np.asarray`` can handle.
+    :param sparse_threshold: If the input is a dataframe, then this determines whether the output tensor will be sparse
+     (similar to the same argument in ``ColumnTransformer``). If the density is less than this value, then the output
+     will be a sparse tensor.
+    :param kwargs: Arguments to ``torch.as_tensor``.
+    :return: A tensor.
     """
+    # need special handling for sparsity:
+    if isinstance(x, pd.DataFrame):
+        if x.apply(_safe_get_density).mean() < sparse_threshold:
+            coo = x.sparse.to_coo()
+            return torch.sparse.FloatTensor(
+                torch.LongTensor(np.vstack((coo.row, coo.col))),
+                torch.FloatTensor(coo.data),
+                torch.Size(coo.shape)
+            )
+
+    # otherwise, handling is simple.
     if not isinstance(x, torch.Tensor):
         x = np.asarray(x)
     return torch.as_tensor(x, **kwargs)
