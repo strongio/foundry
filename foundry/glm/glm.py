@@ -413,7 +413,7 @@ class Glm(BaseEstimator):
             # special handling for classification:
             if k == 'value' and self.label_encoder_ is not None:
                 ydict['value'] = self.label_encoder_.transform(ydict['value'])
-                ydict['value'] = to_tensor(ydict['value'], dtype='int', device=_to_kwargs['device'])
+                ydict['value'] = to_tensor(ydict['value'], dtype=torch.long, device=_to_kwargs['device'])
                 continue
 
             # standard handling:
