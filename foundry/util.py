@@ -27,7 +27,7 @@ def is_array(x) -> bool:
 
 
 def to_tensor(x: Union[np.ndarray, torch.Tensor, pd.DataFrame],
-              sparse_threshold: float = 0.3,
+              sparse_threshold: float = 0.,
               **kwargs) -> torch.Tensor:
     """
     Convert anything that ``np.asarray`` can handle into a tensor; additionally handle dataframes with sparse arrays.
