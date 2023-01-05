@@ -354,12 +354,13 @@ class Glm(BaseEstimator):
         """
         out = {}
         for dp, dp_module in self.module_.items():
+            mm = kwargs.pop(dp, None)
             if isinstance(dp_module, NoWeightModule):
-                if dp in kwargs:
+                if mm is not None and mm.numel():
                     raise RuntimeError(f"When fitted, no predictors were passed for {dp}, so can't pass them now.")
-                out[dp] = dp_module()
+                out[dp] = dp_module(mm)
             else:
-                out[dp] = dp_module(kwargs.pop(dp))
+                out[dp] = dp_module(mm)
         out.update(kwargs)  # remaining are passthru
         return out
 
