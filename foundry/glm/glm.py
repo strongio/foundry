@@ -54,7 +54,6 @@ class Glm(BaseEstimator):
      ``col_mapping={'loc':sklearn.compose.make_column_selector('^col+.'), 'scale':[col1]}``.
     :param sparse_mm_threshold: Density threshold for creating a sparse model-matrix. If X has density less than this,
      the model-matrix will be sparse; otherwise it will be dense. Default .05.
-     ``col_mapping={'loc':sklearn.compose.make_column_selector('^col.+'), 'scale':[col1]}``.
     """
     family_names = {
         'bernoulli': (
