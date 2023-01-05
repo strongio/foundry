@@ -25,7 +25,7 @@ from foundry.glm.util import NoWeightModule, Stopping
 from foundry.hessian import hessian
 from foundry.penalty import L2
 from foundry.util import (
-    FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d, is_array, ModelMatrix, ToSliceDict, maybe_method
+    FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d, is_array, ModelMatrix, ToSliceDict
 )
 from sklearn.exceptions import NotFittedError
 
