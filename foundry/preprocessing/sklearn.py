@@ -248,7 +248,7 @@ class ColumnDropper(TransformerMixin, BaseEstimator):
             self.drop_cols_ = list(self.names)
 
         if self.drop_zero_var:
-            zero_var_cols = X.columns[X.nunique() <= 1]
+            zero_var_cols = X.columns[(X == X.iloc[0]).all()]  # faster than `X.columns[X.nunique() <= 1]`
             self.drop_cols_.extend(col for col in zero_var_cols if col not in set(self.drop_cols_))
 
         return self
