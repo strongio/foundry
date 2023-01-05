@@ -66,12 +66,14 @@ def to_tensor(x: Union[np.ndarray, torch.Tensor, pd.DataFrame],
 
                 # convert to sparse tensor:
                 coo = x.sparse.to_coo()
-                return torch.sparse.FloatTensor(
-                    torch.LongTensor(np.vstack((coo.row, coo.col))),
-                    torch.FloatTensor(coo.data),
+                sparse_tensor = torch.sparse_coo_tensor(
+                    torch.as_tensor(np.vstack([coo.row, coo.col])),
+                    torch.as_tensor(coo.data, **kwargs),
                     torch.Size(coo.shape),
                     device=kwargs.get('device', 'cpu')
                 )
+                # https://github.com/pytorch/pytorch/issues/16187#issuecomment-457791600
+                return sparse_tensor.coalesce()
 
     # otherwise, handling is simple.
     if not isinstance(x, torch.Tensor):
