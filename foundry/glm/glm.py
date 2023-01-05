@@ -249,9 +249,6 @@ class Glm(BaseEstimator):
              verbose: bool = True,
              estimate_laplace_coefs: bool = True) -> 'Glm':
 
-        if verbose:
-            print("Estimating model parameters")
-
         # tallying fit-failurs:
         if self._fit_failed:
             if verbose:
@@ -319,8 +316,6 @@ class Glm(BaseEstimator):
             except KeyboardInterrupt:
                 sleep(1)
                 break
-            except ValueError as e:
-                raise FitFailedException() from e
             finally:
                 self.optimizer_.zero_grad(set_to_none=True)
 
@@ -330,23 +325,13 @@ class Glm(BaseEstimator):
 
         self._fit_failed = 0
 
-        if verbose:
-            print("Estimating model parameters success!")
-
         if estimate_laplace_coefs:
             if verbose:
                 print("Estimating laplace coefs... (you can safely keyboard-interrupt to cancel)")
             try:
                 self.estimate_laplace_coefs(X=X, y=y, sample_weight=sample_weight)
             except KeyboardInterrupt:
-                if verbose:
-                    print("Estimation laplace coefs interrupted")
-
-        if estimate_laplace_coefs and verbose:
-            if self.converged_:
-                print("Estimating laplace coefs success!")
-            else:
-                print("Estimating laplace coefs unsuccessful! See warnings / errors.")
+                pass
 
         return self
 
@@ -699,32 +684,16 @@ class Glm(BaseEstimator):
 
         # create mvnorm for laplace approx:
         with torch.no_grad():
-
             self.converged_ = False
 
             try:
-                # cov = torch.inverse(hess)  # Hello floating point errors my old friend.
-                cholesky_hess = torch.linalg.cholesky(hess)  # This is way more numerically stable
-                inv_cholesky_hess = torch.linalg.inv(cholesky_hess)
-                cov = inv_cholesky_hess.T @ inv_cholesky_hess
-
-                # if `hess` has one eigenvalue of zero, then the matrix will be non-invertible. This usually means one
-                # of the features is constant, or is completely colinear with another feature.
-
-                # if `hess` is poorly conditioned, but is positive definite (PD), it may not remain PD after inversion.
-                # Using the Cholesky decomposition helps, but can still cause issues
-
-                # if `hess` is negative definite (ND), the model hasn't converged. Consider looking at the stopping
-                # criterion.
-
+                cholesky_hess = torch.linalg.cholesky(hess)
                 self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
-                    means, covariance_matrix=cov, validate_args=True
+                    means, scale_tril=torch.linalg.inv(cholesky_hess), validate_args=True
                 )
-
                 self.converged_ = True
-
             except RuntimeError as e:
-                warn(f"RunTimeError(\"{(str(e))}\")")
+                warn(f"RuntimeError(\"{(str(e))}\")")
                 warn("Second order estimation of parameter distribution failed. Constructing approximate covariance.")
                 fake_cov = torch.diag(torch.diag(hess).pow(-1).clip(min=1E-5))
                 self._coef_mvnorm_ = torch.distributions.MultivariateNormal(means, covariance_matrix=fake_cov)
