@@ -9,14 +9,13 @@ from pandas.testing import assert_frame_equal
 from scipy.sparse import spmatrix, coo_matrix
 from sklearn.preprocessing import OneHotEncoder
 
-from foundry.preprocessing import make_drop_transformer, make_column_selector, InteractionFeatures, DataFrameTransformer
+from foundry.preprocessing import make_column_selector, InteractionFeatures, DataFrameTransformer, ColumnDropper
 
 
-@pytest.fixture()
-def small_dataframe():
+def make_small_df():
     return pd.DataFrame({
         "A": [0., 1., 2., 3.],
-        "B": [0.5, -0.5, 0.5, -0.5],
+        "B": [0.5, 0.5, 0.5, 0.5],
         "C": [-1., -2., -3., -4.],
     })
 
@@ -24,54 +23,65 @@ def small_dataframe():
 @pytest.mark.parametrize(
     "kwargs, expected",
     [
-        (
-                dict(),
-                pd.DataFrame({"A": [0., 1., 2., 3., ], "B": [0.5, -0.5, 0.5, -0.5], "C": [-1., -2., -3., -4., ]})
-        ),
-        (
-                {"names": "A"},
-                pd.DataFrame({"B": [0.5, -0.5, 0.5, -0.5], "C": [-1., -2., -3., -4.]})
-        ),
-        (
-                {"names": ["A", "B"]},
-                pd.DataFrame({"C": [-1., -2., -3., -4., ]})
-        ),
-        (
-                {"pattern": "[AB]"},
-                pd.DataFrame({"C": [-1., -2., -3., -4., ]})
+        pytest.param(
+            {'drop_zero_var': False},
+            make_small_df(),
+            id="no names/pattern"
         ),
         pytest.param(
-            {"names": "A", "pattern": ".*"},
-            ValueError
+            {"names": "A", 'drop_zero_var': False},
+            pd.DataFrame({"B": [0.5, 0.5, 0.5, 0.5], "C": [-1., -2., -3., -4.]}),
+            id="drop based on name"
         ),
-    ],
-    ids=[
-        "no_drop",
-        "drop_by_name",
-        "drop_by_names",
-        "drop_by_regex",
-        "err_too_many",
+        pytest.param(
+            {"names": ["A", "B"], 'drop_zero_var': False},
+            pd.DataFrame({"C": [-1., -2., -3., -4., ]}),
+            id="drop based on names"
+        ),
+        pytest.param(
+            {"pattern": "[AB]", 'drop_zero_var': False},
+            pd.DataFrame({"C": [-1., -2., -3., -4., ]}),
+            id="drop based on pattern"
+        ),
+        pytest.param(
+            {'drop_zero_var': True},
+            pd.DataFrame({"A": [0., 1., 2., 3., ], "C": [-1., -2., -3., -4.]}),
+            id="drop zero-var columns"
+        ),
+        pytest.param(
+            {'names': 'A', 'drop_zero_var': True},
+            pd.DataFrame({"C": [-1., -2., -3., -4.]}),
+            id="drop zero-var columns and more"
+        ),
+        pytest.param(
+            {"names": "A", "pattern": ".*", 'drop_zero_var': False},
+            ValueError,
+            id="can't pass both name and pattern"
+        ),
+        pytest.param(
+            {"names": "D", 'drop_zero_var': False},
+            RuntimeError,
+            id="can't pass colname that's not in df"
+        ),
     ]
 )
-def test_make_drop_transformer(small_dataframe, kwargs, expected):
+def test_column_dropper(kwargs: dict,
+                        expected: Union[pd.DataFrame, Type[Exception]]):
+    small_df = make_small_df()
+    my_drop_transformer = ColumnDropper(**kwargs)
     if isinstance(expected, pd.DataFrame):
-        my_drop_transformer = make_drop_transformer(**kwargs)
-        test = my_drop_transformer.fit(small_dataframe).transform(small_dataframe)
+        test = my_drop_transformer.fit(small_df).transform(small_df)
         assert_frame_equal(expected, test)
     else:
         with pytest.raises(expected):
-            make_drop_transformer(**kwargs)
+            my_drop_transformer.fit(small_df)
 
 
 def test_make_column_selector():
-    small_dataframe = pd.DataFrame({
-        "A": [0., 1., 2., 3., ],
-        "B": [0.5, -0.5, 0.5, -0.5],
-        "C": [-1., -2., -3., -4., ]
-    })
+    small_df = make_small_df()
     column_selector = make_column_selector("[AB]")
 
-    assert column_selector(small_dataframe) == ["A", "B"]
+    assert column_selector(small_df) == ["A", "B"]
     assert "[AB]" in repr(column_selector)
 
 
