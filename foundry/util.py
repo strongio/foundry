@@ -331,6 +331,8 @@ def to_2d(arr: ArrayType) -> ArrayType:
     :param arr: Numpy array or tensor.
     :return: 2d of same type
     """
+    # TODO what about pandas? Slicing arr[None, ...] not officially supported.
+
     ndim = len(arr.shape)
     if ndim == 2:
         return arr
