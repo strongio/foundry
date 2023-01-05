@@ -11,6 +11,11 @@ ModelMatrix = Union[np.ndarray, pd.DataFrame, Dict[str, Union[np.ndarray, pd.Dat
 
 # TODO: unit-tests
 
+def transpose_last_dims(x: torch.Tensor) -> torch.Tensor:
+    args = list(range(len(x.shape)))
+    args[-2], args[-1] = args[-1], args[-2]
+    return x.permute(*args)
+
 def is_array(x) -> bool:
     """
     Check if an object is an array, by checking if it has an `__array__` method. This is usually to distinguish between

@@ -68,10 +68,12 @@ class Family:
         if weight is None:
             weight = torch.ones_like(value)
 
-        if len(distribution.batch_shape) == 1:
+        distribution_shape = distribution.batch_shape + distribution.event_shape
+
+        if len(distribution_shape) == 1:
             value = to_1d(value)
             weight = to_1d(weight)
-        elif len(distribution.batch_shape) == 2:
+        elif len(distribution_shape) == 2:
             value = to_2d(value)
             weight = to_2d(weight)
         else:
@@ -102,14 +104,7 @@ class Family:
         # TODO: support discretized
 
         log_probs = distribution.log_prob(value)
-        if len(log_probs.shape) == 2:
-            assert log_probs.shape[-1] == 1
-            assert len(value.shape) == 2
-        else:
-            assert len(log_probs.shape) == 1
-            assert len(value.shape) == 1
-
-        log_probs = weight * log_probs
+        log_probs = to_1d(weight) * to_1d(log_probs)
         return log_probs
 
     @staticmethod

@@ -18,29 +18,35 @@ from sklearn.preprocessing import LabelEncoder
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from tqdm import tqdm
 
+from foundry.covariance import Covariance
 from foundry.glm.family import Family, CeilingWeibull
 from foundry.glm.family.survival import SurvivalFamily
 from foundry.glm.util import NoWeightModule, Stopping
 from foundry.hessian import hessian
 from foundry.penalty import L2
 from foundry.util import (
-    FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d, is_array, ModelMatrix, ToSliceDict
+    FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d, is_array, ModelMatrix, ToSliceDict, maybe_method
 )
 from sklearn.exceptions import NotFittedError
 
 N_FIT_RETRIES = int(os.getenv('GLM_N_FIT_RETRIES', 10))
 
 
-def _softmax_kp1(x: torch.Tensor) -> torch.Tensor:
+class SoftmaxKp1:
     """
     Given logits corresponding to the probabilities of K classes, convert to class-probabilities for K+1 classes.
 
     :param x: A tensor of logits whose final dim indexes the class
     :return: A tensor of probs with the same shape as the input, except the last dim is one longer.
     """
-    *leading_dims, n_classes = x.shape
-    x_p1 = torch.cat([x, torch.zeros(*leading_dims, 1, dtype=x.dtype, device=x.device)], -1)
-    return torch.softmax(x_p1, -1)
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        *leading_dims, n_classes = x.shape
+        x_p1 = torch.cat([x, torch.zeros(*leading_dims, 1, dtype=x.dtype, device=x.device)], -1)
+        return torch.softmax(x_p1, -1)
+
+    def get_param_dim(self, y_dim: int) -> int:
+        return y_dim - 1
 
 
 class Glm(BaseEstimator):
@@ -73,11 +79,11 @@ class Glm(BaseEstimator):
         ),
         'categorical': (
             distributions.Categorical,
-            {'probs': _softmax_kp1}
+            {'probs': SoftmaxKp1()}
         ),
         'multinomial': (
             distributions.Multinomial,
-            {'probs': _softmax_kp1}
+            {'probs': SoftmaxKp1()}
         ),
         'poisson': (
             distributions.Poisson,
@@ -101,11 +107,18 @@ class Glm(BaseEstimator):
                 'concentration': transforms.ExpTransform()
             }
         ),
-        'gaussian': (
+        'normal': (
             torch.distributions.Normal,
             {
                 'loc': transforms.identity_transform,
                 'scale': transforms.ExpTransform()
+            }
+        ),
+        'multivariate_normal': (
+            torch.distributions.MultivariateNormal,
+            {
+                'loc': transforms.identity_transform,
+                'covariance_matrix': Covariance()
             }
         ),
         'ceiling_weibull': (
@@ -117,6 +130,8 @@ class Glm(BaseEstimator):
             }
         )
     }
+    family_names['gaussian'] = family_names['normal']
+    family_names['mvnorm'] = family_names['multivariate_normal']
 
     def __init__(self,
                  family: Union[str, Family],
@@ -502,16 +517,26 @@ class Glm(BaseEstimator):
 
     def _get_module_num_outputs(self, y: np.ndarray, dist_param_name: str) -> int:
         assert len(y.shape) == 2
-        if self.family.supports_predict_proba:
-            if self.label_encoder_ is not None:
-                # classification
-                return len(self.label_encoder_.classes_) - 1
-            else:
-                # neither: binomial/multinomial
-                return max(y.shape[1] - 1, 1)
+        if self.label_encoder_ is not None:
+            # classification
+            y_dim = len(self.label_encoder_.classes_)
         else:
             # regression:
-            return y.shape[1]
+            y_dim = y.shape[1]
+
+        # for most distribution-params, the number of outputs we need to predict is dictated by the structure of `y`:
+        # we need to predict one value if `y` is (n, 1), two values if `y` is (n, 2), etc.
+        # however, there are exceptions:
+        # - parameters of a covariance-matrix
+        # - parameters of a categorical distribution (k-1 classes)
+        # the way this is implemented is by having that inverse-link-function also have a `get_param_dim` method
+        # which takes the shape of y and returns the number of parameters needed
+        ilink = self.family.params_and_links[dist_param_name]
+        get_param_dim = getattr(ilink, 'get_param_dim', None)
+        if get_param_dim:
+            return get_param_dim(y_dim)
+        else:
+            return y_dim
 
     @classmethod
     def module_factory(cls,
