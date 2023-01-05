@@ -33,7 +33,19 @@ from tests.conftest import assert_tensors_equal
             .10,
             torch.tensor([[0., 0., 0., 1.], [1.5, 2., 3., 4.]]).T,
             id='mix of sparse and dense, not sparse enough'
-        )
+        ),
+        pytest.param(
+            pd.DataFrame({'a': [0, 0, 0, 1], 'b': [1.5, 2., 3., 4.]}),
+            .99,
+            torch.tensor([[0., 0., 0., 1.], [1.5, 2., 3., 4.]]).T,
+            id='just dense'
+        ),
+        pytest.param(
+            pd.DataFrame(index=range(4)),
+            .99,
+            torch.empty((4, 0)),
+            id='empty'
+        ),
     ]
 )
 def test_to_tensor(x: pd.DataFrame, sparse_threshold: float, expected: torch.Tensor):

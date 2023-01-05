@@ -36,7 +36,7 @@ def to_tensor(x: Union[np.ndarray, torch.Tensor, pd.DataFrame],
     """
     # need special handling for sparsity:
     if isinstance(x, pd.DataFrame):
-        sparse_cols = x.columns[x.apply(pd.api.types.is_sparse).values]
+        sparse_cols = x.columns[x.apply(pd.api.types.is_sparse).astype('bool').values]
         dense_cols = x.columns[~x.columns.isin(sparse_cols)]
         if len(sparse_cols):
             densities = pd.Series(np.ones(x.shape[1]), index=x.columns)
