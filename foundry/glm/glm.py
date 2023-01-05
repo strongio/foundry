@@ -129,7 +129,7 @@ class Glm(BaseEstimator):
         self.family = family
         self.penalty = penalty
         self.col_mapping = col_mapping
-        self.sparse_mm_threshold=sparse_mm_threshold
+        self.sparse_mm_threshold = sparse_mm_threshold
 
         # set in _init_module:
         self._module_ = None
@@ -671,13 +671,13 @@ class Glm(BaseEstimator):
 
         # create mvnorm for laplace approx:
         with torch.no_grad():
-            failed = False
+            fail_msg = ''
             try:
                 cov = torch.inverse(hess)
-            except RuntimeError:
-                failed = True
+            except RuntimeError as e:
+                fail_msg = str(e)
 
-            if not failed:
+            if not fail_msg:
                 try:
                     self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
                         means, covariance_matrix=cov, validate_args=True
@@ -686,10 +686,12 @@ class Glm(BaseEstimator):
                 except ValueError as e:
                     if 'constraint PositiveDefinite' not in str(e):
                         raise e
-                    failed = True
+                    fail_msg = str(e)
 
-            if failed:
-                warn(f"Model failed to converge; ``laplace_params`` cannot be estimated. hess.diag():\n{hess.diag()}")
+            if fail_msg:
+                warn(f"Model failed to converge; ``laplace_params`` cannot be estimated."
+                     f"\nhess.diag():\n{hess.diag()}"
+                     f"\nfail msg:\n{fail_msg}")
                 fake_cov = torch.eye(hess.shape[0]) * 1e-10
                 self._coef_mvnorm_ = torch.distributions.MultivariateNormal(means, covariance_matrix=fake_cov)
                 self.converged_ = False
