@@ -5,7 +5,7 @@ import torch
 from torch import distributions
 
 from .util import log1mexp
-from foundry.util import to_2d, is_invalid, to_1d
+from foundry.util import is_invalid, to_1d, to_2d, to_tensor
 
 
 class Family:
@@ -86,7 +86,7 @@ class Family:
         # Check that weights are strictly positive
         if (weight <= 0).any():
             raise ValueError("Some weight <= 0")
-        # Check that value and weight shapes are equal
+        # Check that value and weight shapes have the same length
         if weight.shape[0] != value.shape[0]:
             raise ValueError(f"weight.shape[0] is {weight.shape[0]} but value.shape[0] is {value.shape[0]}")
 

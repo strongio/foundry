@@ -85,6 +85,7 @@ class Glm(BaseEstimator):
      ``col_mapping={'loc':sklearn.compose.make_column_selector('^col+.'), 'scale':[col1]}``.
     :param sparse_mm_threshold: Density threshold for creating a sparse model-matrix. If X has density less than this,
      the model-matrix will be sparse; otherwise it will be dense. Default .05.
+     ``col_mapping={'loc':sklearn.compose.make_column_selector('^col.+'), 'scale':[col1]}``.
     """
     family_names = {
         'bernoulli': (
@@ -283,6 +284,8 @@ class Glm(BaseEstimator):
              verbose: bool = True,
              estimate_laplace_coefs: bool = True) -> 'Glm':
 
+        print("Estimating model parameters")
+
         # tallying fit-failurs:
         if self._fit_failed:
             if verbose:
@@ -316,9 +319,9 @@ class Glm(BaseEstimator):
         if verbose:
             prog = self._init_pb()
 
-        # 'closure' for torch.optimizer.Optimizer.step method:
         epoch = 0
 
+        # 'closure' for torch.optimizer.Optimizer.step method:
         def closure():
             self.optimizer_.zero_grad()
             loss = -self.get_log_prob(x_dict, lp_dict)
@@ -350,6 +353,8 @@ class Glm(BaseEstimator):
             except KeyboardInterrupt:
                 sleep(1)
                 break
+            except ValueError as e:
+                raise FitFailedException() from e
             finally:
                 self.optimizer_.zero_grad(set_to_none=True)
 
@@ -359,6 +364,8 @@ class Glm(BaseEstimator):
 
         self._fit_failed = 0
 
+        print("Estimating model parameters success!")
+
         if estimate_laplace_coefs:
             if verbose:
                 print("Estimating laplace coefs... (you can safely keyboard-interrupt to cancel)")
@@ -366,11 +373,11 @@ class Glm(BaseEstimator):
                 self.estimate_laplace_coefs(X=X, y=y, sample_weight=sample_weight)
             except KeyboardInterrupt:
                 print("Estimation laplace coefs interrupted")
-                pass
+
             if self.converged_:
                 print("Estimating laplace coefs success!")
             else:
-                print("Estimating laplace coefs failed! See warnings / errors.")
+                print("Estimating laplace coefs unsuccessful! See warnings / errors.")
 
 
         return self
@@ -747,9 +754,9 @@ class Glm(BaseEstimator):
 
                 self.converged_ = True
 
-            except RuntimeError:
+            except RuntimeError as e:
+                warn(f"RunTimeError(\"{(str(e))}\")")
                 warn("Second order estimation of parameter distribution failed. Constructing approximate covariance.")
-                warn(f"\nfail_msg: \n{fail_msg}")
                 fake_cov = torch.diag(torch.diag(hess).pow(-1).clip(min=1E-5))
                 self._coef_mvnorm_ = torch.distributions.MultivariateNormal(means, covariance_matrix=fake_cov)
 
