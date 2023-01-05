@@ -684,7 +684,6 @@ class Glm(BaseEstimator):
         # create mvnorm for laplace approx:
         with torch.no_grad():
             self.converged_ = False
-
             try:
                 cholesky_hess = torch.linalg.cholesky(hess)
                 self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
