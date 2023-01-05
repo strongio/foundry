@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch, MagicMock
 
 import pytest
 import torch.distributions
+from torch.distributions import Bernoulli
 
 from foundry.glm import Glm
 from foundry.glm.family import Family
@@ -201,12 +202,13 @@ def test__validate_values(input: tuple,
                           expected_output: tuple,
                           expected_exception: Optional[Type[Exception]]):
     torch_distribution = Mock()
-    torch_distribution.batch_shape = (3, 1)
+    torch_distribution.probs.shape = (3, 2)
+    family = Family(torch_distribution, params_and_links={'probs' : lambda x: x})
     if expected_exception:
         with pytest.raises(expected_exception):
-            Family._validate_values(*input, distribution=torch_distribution)
+            family._validate_values(*input, distribution=torch_distribution)
     else:
-        value, weights = Family._validate_values(*input, distribution=torch_distribution)
+        value, weights = family._validate_values(*input, distribution=torch_distribution)
         assert_tensors_equal(value, expected_output[0])
         assert_tensors_equal(weights, expected_output[1])
 

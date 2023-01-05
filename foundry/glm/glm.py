@@ -63,7 +63,7 @@ class Glm(BaseEstimator):
      ``col_mapping={'loc':sklearn.compose.make_column_selector('^col+.'), 'scale':[col1]}``.
     """
     family_names = {
-        'bernouilli': (
+        'bernoulli': (
             distributions.Bernoulli,
             {'probs': transforms.SigmoidTransform()},
         ),
@@ -354,12 +354,13 @@ class Glm(BaseEstimator):
         """
         out = {}
         for dp, dp_module in self.module_.items():
+            mm = kwargs.pop(dp, None)
             if isinstance(dp_module, NoWeightModule):
-                if dp in kwargs:
+                if mm is not None and mm.numel():
                     raise RuntimeError(f"When fitted, no predictors were passed for {dp}, so can't pass them now.")
-                out[dp] = dp_module()
+                out[dp] = dp_module(mm)
             else:
-                out[dp] = dp_module(kwargs.pop(dp))
+                out[dp] = dp_module(mm)
         out.update(kwargs)  # remaining are passthru
         return out
 
@@ -413,7 +414,7 @@ class Glm(BaseEstimator):
             # special handling for classification:
             if k == 'value' and self.label_encoder_ is not None:
                 ydict['value'] = self.label_encoder_.transform(ydict['value'])
-                ydict['value'] = to_tensor(ydict['value'], dtype='int', device=_to_kwargs['device'])
+                ydict['value'] = to_tensor(ydict['value'], dtype=torch.long, device=_to_kwargs['device'])
                 continue
 
             # standard handling:

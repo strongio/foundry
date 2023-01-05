@@ -15,7 +15,16 @@ from foundry.glm.family import Family
 from foundry.glm.glm import ModelMatrix, Glm
 from foundry.glm.util import NoWeightModule
 from foundry.util import to_2d, ToSliceDict
-from tests.conftest import assert_dict_of_tensors_equal, assert_scalars_equal
+from tests.conftest import assert_dict_of_tensors_equal, assert_scalars_equal, assert_tensors_equal
+
+
+def test_categorical_integration():
+    y = pd.Series([0] * 3 + [1] * 2 + [2] * 5, name='cat').to_frame()
+    X = pd.DataFrame(index=y.index)
+    glm = Glm(family='categorical')
+    glm.fit(X=X, y=y, max_loss=float('inf'), verbose=False)
+    assert set(glm.predict(X=X)) == {2}
+    np.testing.assert_allclose(glm.predict_proba(X=X).mean(0), np.asarray([.30, .20, .50]), atol=.001)
 
 
 class _FakeDist:

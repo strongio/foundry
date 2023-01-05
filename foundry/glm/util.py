@@ -13,6 +13,8 @@ class NoWeightModule(torch.nn.Module):
         out = self.bias
         if input is not None:
             out = out.expand(len(input), -1)
+        else:
+            out = out.expand(1, -1)
         return out
 
 
