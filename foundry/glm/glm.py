@@ -144,7 +144,7 @@ class Glm(BaseEstimator):
         self.family = family
         self.penalty = penalty
         self.col_mapping = col_mapping
-        self.sparse_mm_threshold=sparse_mm_threshold
+        self.sparse_mm_threshold = sparse_mm_threshold
 
         # set in _init_module:
         self._module_ = None
