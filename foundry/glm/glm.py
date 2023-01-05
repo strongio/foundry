@@ -63,7 +63,7 @@ class Glm(BaseEstimator):
      ``col_mapping={'loc':sklearn.compose.make_column_selector('^col+.'), 'scale':[col1]}``.
     """
     family_names = {
-        'bernouilli': (
+        'bernoulli': (
             distributions.Bernoulli,
             {'probs': transforms.SigmoidTransform()},
         ),
