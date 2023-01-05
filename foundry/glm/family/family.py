@@ -56,14 +56,13 @@ class Family:
         dist_kwargs.update(kwargs)
         return self.distribution_cls(**dist_kwargs)
 
-    @classmethod
-    def _validate_values(cls,
+    def _validate_values(self,
                          value: torch.Tensor,
                          weight: Optional[torch.Tensor],
                          distribution: distributions.Distribution) -> Tuple[torch.Tensor, torch.Tensor]:
         value = to_2d(value)
 
-        cls._raise_invalid_values(value)
+        self._raise_invalid_values(value)
 
         if weight is None:
             weight = torch.ones_like(value)
@@ -74,11 +73,12 @@ class Family:
             if weight.shape[0] != value.shape[0]:
                 raise ValueError(f"weight.shape[0] is {weight.shape[0]} but value.shape[0] is {value.shape[0]}")
 
-        if len(distribution.batch_shape) != 2:
-            raise ValueError(f"distribution.batch_shape should be 2D, but it's {distribution.batch_shape}")
-
-        if distribution.batch_shape != value.shape:
-            raise ValueError(f"distribution.batch_shape is {distribution.batch_shape} but value.shape is {value.shape}")
+        for dp in self.params:
+            dp_shape = getattr(distribution, dp).shape
+            if len(dp_shape) != len(value.shape) or dp_shape[0] != value.shape[0]:
+                raise ValueError(
+                    f"distribution.{dp} is {dp_shape} but value.shape is {value.shape}"
+                )
 
         return value, weight
 

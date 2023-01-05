@@ -97,8 +97,7 @@ class SurvivalFamily(Family):
         # invalid values permitted for censored observations
         pass
 
-    @classmethod
-    def _validate_values(cls,
+    def _validate_values(self,
                          value: torch.Tensor,
                          weight: Optional[torch.Tensor],
                          distribution: distributions.Distribution) -> Tuple[torch.Tensor, torch.Tensor]:
