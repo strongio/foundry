@@ -13,23 +13,23 @@
 #     name: python3
 # ---
 
+# +
 import numpy as np
 import pandas as pd
 
 import foundry
-
-from data.uci import get_wine_dataset
-X, y = get_wine_dataset()
-
-
 from foundry.glm import Glm
 from foundry.util import to_2d
 
-X
+from data.uci import get_wine_dataset
 
-y
+# -
 
-Glm("categorical", ).fit(X, to_2d(y))
+X, y = get_wine_dataset()
+
+
+breakpoint()
+Glm("categorical", ).fit(X, y.values)
 
 y
 
