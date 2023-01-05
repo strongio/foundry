@@ -202,7 +202,7 @@ def test__validate_values(input: tuple,
                           expected_output: tuple,
                           expected_exception: Optional[Type[Exception]]):
     torch_distribution = Mock()
-    torch_distribution.probs.shape = (3, 2)
+    torch_distribution.batch_shape = (3, 1)
     family = Family(torch_distribution, params_and_links={'probs' : lambda x: x})
     if expected_exception:
         with pytest.raises(expected_exception):
