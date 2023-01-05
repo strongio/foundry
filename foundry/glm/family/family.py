@@ -5,7 +5,7 @@ import torch
 from torch import distributions
 
 from .util import log1mexp
-from foundry.util import to_2d, is_invalid
+from foundry.util import to_2d, is_invalid, to_1d
 
 
 class Family:
@@ -60,25 +60,27 @@ class Family:
                          value: torch.Tensor,
                          weight: Optional[torch.Tensor],
                          distribution: distributions.Distribution) -> Tuple[torch.Tensor, torch.Tensor]:
-        value = to_2d(value)
-
+        """
+        Standardize the shape of value and weight so they match the distribution
+        """
         self._raise_invalid_values(value)
 
         if weight is None:
             weight = torch.ones_like(value)
-        else:
-            if (weight <= 0).any():
-                raise ValueError("Some weight <= 0")
-            weight = to_2d(weight)
-            if weight.shape[0] != value.shape[0]:
-                raise ValueError(f"weight.shape[0] is {weight.shape[0]} but value.shape[0] is {value.shape[0]}")
 
-        for dp in self.params:
-            dp_shape = getattr(distribution, dp).shape
-            if len(dp_shape) != len(value.shape) or dp_shape[0] != value.shape[0]:
-                raise ValueError(
-                    f"distribution.{dp} is {dp_shape} but value.shape is {value.shape}"
-                )
+        if len(distribution.batch_shape) == 1:
+            value = to_1d(value)
+            weight = to_1d(weight)
+        elif len(distribution.batch_shape) == 2:
+            value = to_2d(value)
+            weight = to_2d(weight)
+        else:
+            raise NotImplementedError
+
+        if (weight <= 0).any():
+            raise ValueError("Some weight <= 0")
+        if weight.shape[0] != value.shape[0]:
+            raise ValueError(f"weight.shape[0] is {weight.shape[0]} but value.shape[0] is {value.shape[0]}")
 
         return value, weight
 
@@ -91,12 +93,22 @@ class Family:
                  distribution: torch.distributions.Distribution,
                  value: torch.Tensor,
                  weight: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Return a 1d array of log-probs, one for each row in ``value``.
+        """
 
         value, weight = self._validate_values(value, weight, distribution)
 
         # TODO: support discretized
 
         log_probs = distribution.log_prob(value)
+        if len(log_probs.shape) == 2:
+            assert log_probs.shape[-1] == 1
+            assert len(value.shape) == 2
+        else:
+            assert len(log_probs.shape) == 1
+            assert len(value.shape) == 1
+
         log_probs = weight * log_probs
         return log_probs
 
