@@ -667,20 +667,28 @@ class Glm(BaseEstimator):
 
         # create mvnorm for laplace approx:
         with torch.no_grad():
-            cov = torch.inverse(hess)
+            failed = False
             try:
-                self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
-                    means, covariance_matrix=cov, validate_args=True
-                )
-                self.converged_ = True
-            except ValueError as e:
-                if 'constraint PositiveDefinite' in str(e):
-                    warn(f"Model failed to converge; `laplace_params` cannot be estimated. cov.diag():\n{cov.diag()}")
-                    fake_cov = torch.eye(hess.shape[0]) * 1e-10
-                    self._coef_mvnorm_ = torch.distributions.MultivariateNormal(means, covariance_matrix=fake_cov)
-                    self.converged_ = False
-                else:
-                    raise e
+                cov = torch.inverse(hess)
+            except RuntimeError:
+                failed = True
+
+            if not failed:
+                try:
+                    self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
+                        means, covariance_matrix=cov, validate_args=True
+                    )
+                    self.converged_ = True
+                except ValueError as e:
+                    if 'constraint PositiveDefinite' not in str(e):
+                        raise e
+                    failed = True
+
+            if failed:
+                warn(f"Model failed to converge; ``laplace_params`` cannot be estimated. hess.diag():\n{hess.diag()}")
+                fake_cov = torch.eye(hess.shape[0]) * 1e-10
+                self._coef_mvnorm_ = torch.distributions.MultivariateNormal(means, covariance_matrix=fake_cov)
+                self.converged_ = False
 
     def _estimate_laplace_coefs(self,
                                 X: ModelMatrix,
