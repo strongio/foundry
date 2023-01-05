@@ -417,27 +417,29 @@ class Glm(BaseEstimator):
         return Xdict
 
     def _get_ydict(self, y: ModelMatrix, sample_weight: Optional[np.ndarray]) -> Dict[str, torch.Tensor]:
+        # Checks of arguments
+        if isinstance(y, dict) and 'weight' in y.keys() and sample_weight is not None:
+            raise ValueError("Please pass either `sample_weight` or y=dict(weight=), but not both.")
+        if isinstance(y, dict) and 'value' not in y.keys():
+            raise ValueError("y is dict but does not contain 'value' matrix")
+
+        # Define the ydict here
         if isinstance(y, dict):
-            assert 'value' in y
             ydict = y.copy()
         else:
             ydict = {'value': y}
 
         y_len = ydict['value'].shape[0]
 
-        if 'weight' in ydict:
-            if sample_weight is not None:
-                raise ValueError("Please pass either `sample_weight` or y=dict(weight=), but not both.")
-        elif sample_weight is not None:
-            ydict['weight'] = sample_weight
-
-        if ydict.get('weight', None) is None:
-            ydict['weight'] = torch.ones(y_len)
-        else:
-            assert (ydict['weight'] >= 0).all()
+        ydict['weight'] = ydict.get(
+            'weight',
+            sample_weight if sample_weight is not None else torch.ones(y_len)
+        )
+        assert (ydict['weight'] >= 0).all()
 
         _to_kwargs = get_to_kwargs(self.module_)
 
+        # Checks on ydict before return
         for k in list(ydict):
             if not hasattr(ydict[k], '__iter__'):
                 # wait until we have a use-case
