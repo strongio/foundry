@@ -176,7 +176,7 @@ class Glm(BaseEstimator):
         :param max_loss: If training stops and loss is higher than this, a class:`foundry.util.FitFailedException` will
          be raised and fitting will be retried with a different set of inits.
         :param verbose: Whether to allow print statements and a progress bar during training. Default True.
-        :param estimate_laplace_coefs: If true, then after fitting, the hessian of the optimzed parameters will be
+        :param estimate_laplace_coefs: If true, then after fitting, the hessian of the optimized parameters will be
          estimated; this can then be used for confidence-intervals and statistical inference (see ``coef_dataframe_``).
          Can set to False if you want to save time and skip this step.
         :return: This ``Glm`` instance.

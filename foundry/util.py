@@ -3,6 +3,7 @@ from typing import Union, Dict
 import numpy as np
 import pandas as pd
 import torch
+from pandas.core.dtypes.cast import find_common_type
 from sklearn.base import BaseEstimator, TransformerMixin
 
 ArrayType = Union[np.ndarray, torch.Tensor]
@@ -20,14 +21,6 @@ def is_array(x) -> bool:
     return hasattr(x, '__array__')
 
 
-def _safe_get_density(series: pd.Series) -> float:
-    try:
-        density = series.sparse.density
-    except AttributeError:
-        density = 1.
-    return density
-
-
 def to_tensor(x: Union[np.ndarray, torch.Tensor, pd.DataFrame],
               sparse_threshold: float = 0.3,
               **kwargs) -> torch.Tensor:
@@ -43,13 +36,42 @@ def to_tensor(x: Union[np.ndarray, torch.Tensor, pd.DataFrame],
     """
     # need special handling for sparsity:
     if isinstance(x, pd.DataFrame):
-        if x.apply(_safe_get_density).mean() < sparse_threshold:
-            coo = x.sparse.to_coo()
-            return torch.sparse.FloatTensor(
-                torch.LongTensor(np.vstack((coo.row, coo.col))),
-                torch.FloatTensor(coo.data),
-                torch.Size(coo.shape)
-            )
+        sparse_cols = x.columns[x.apply(pd.api.types.is_sparse).values]
+        dense_cols = x.columns[~x.columns.isin(sparse_cols)]
+        if len(sparse_cols):
+            densities = pd.Series(np.ones(x.shape[1]), index=x.columns)
+            densities[sparse_cols] = x[sparse_cols].apply(lambda x: x.sparse.density)
+            if densities.mean() < sparse_threshold:
+                sparse_dtypes = x[sparse_cols].dtypes
+
+                # get fill-value:
+                _fill_values = [dtype.fill_value for dtype in sparse_dtypes]
+                if len(set(_fill_values)) != 1:
+                    raise ValueError(
+                        f"`x` has sparsity < {sparse_threshold}, but sparse columns have different `fill_values` "
+                        f"({_fill_values}) so cannot convert to a single sparse tensor. Use a single fill_value, "
+                        f"or pass `sparse_threshold=0`."
+                    )
+                fill_value = _fill_values[0]
+
+                # get dtype:
+                common_dtype = find_common_type(
+                    [dtype.subtype for dtype in sparse_dtypes] + x[dense_cols].dtypes.tolist()
+                )
+
+                # convert dense cols to sparse:
+                x = x.copy(deep=False)
+                for col in dense_cols:
+                    x[col] = x[col].astype(pd.SparseDtype(common_dtype, fill_value))
+
+                # convert to sparse tensor:
+                coo = x.sparse.to_coo()
+                return torch.sparse.FloatTensor(
+                    torch.LongTensor(np.vstack((coo.row, coo.col))),
+                    torch.FloatTensor(coo.data),
+                    torch.Size(coo.shape),
+                    device=kwargs.get('device', 'cpu')
+                )
 
     # otherwise, handling is simple.
     if not isinstance(x, torch.Tensor):
