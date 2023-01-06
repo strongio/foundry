@@ -104,7 +104,19 @@ class Family:
         # TODO: support discretized
 
         log_probs = distribution.log_prob(value)
-        log_probs = to_1d(weight) * to_1d(log_probs)
+        if len(log_probs.shape) > 1:
+            # - if multi-output with some relationship between outputs (e.g. categorical, mvnorm), then
+            #   log_prob will be 1D-like.
+            # - but if multi-output with no relationship between outputs, then log-prob will be 2d; the prob-per-row is
+            #   just the product of the individual probs. todo: handle nans in one but not all dims?
+            assert len(log_probs.shape) == 2
+            if log_probs.shape[-1] > 1:
+                assert len(value.shape) > 1 and value.shape[-1] == log_probs.shape[-1]
+                log_probs = log_probs.sum(1)
+            else:
+                log_probs = to_1d(log_probs)
+        assert len(log_probs.shape) == 1
+        log_probs = to_1d(weight) * log_probs
         return log_probs
 
     @staticmethod
