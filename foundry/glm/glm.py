@@ -39,10 +39,10 @@ class Glm(BaseEstimator):
     :param family: A family name; you can see available names with ``Glm.family_names``. (Advanced: you can also pass
      the :class:`foundry.glm.family.Family` instead of a name). Some names can be prefixed with ``survival_`` for
      support for censored data.
-    :param penalty: A multiplier for L2 penalty on coefficients. Can be a single value, or a dictionary of these to
-     support different penalties per distribution-parameter. Values can either be floats, or can be functions that take
-     a ``torch.nn.Module`` as the first argument and that module's param-names as second argument, and returns a scalar
-     penalty that will be applied to the log-prob.
+    :param penalty: Specify a penalty on coefficients. Can be a single value, or a dictionary of these to support
+     different penalties per distribution-parameter. Values can either be floats, which will be interpreted as L2
+     penalty magnitudes, or can be functions that take a ``torch.nn.Module`` as the first argument and that module's
+     param-names as second argument, and returns a scalar penalty that will be applied to the log-prob.
     :param col_mapping: Many distributions have multiple parameters: for example the normal distribution has a
      location and scale parameter. If a single dataframe/matrix is passed to  :class:`foundry.glm.Glm.fit`, the default
      behavior is to use this to predict the *first* parameter (e.g. loc) while other parameters (e.g. scale) have no
