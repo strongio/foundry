@@ -68,10 +68,12 @@ class Family:
         if weight is None:
             weight = torch.ones_like(value)
 
-        if len(distribution.batch_shape) == 1:
+        distribution_shape = distribution.batch_shape + distribution.event_shape
+
+        if len(distribution_shape) == 1:
             value = to_1d(value)
             weight = to_1d(weight)
-        elif len(distribution.batch_shape) == 2:
+        elif len(distribution_shape) == 2:
             value = to_2d(value)
             weight = to_2d(weight)
         else:
@@ -102,14 +104,19 @@ class Family:
         # TODO: support discretized
 
         log_probs = distribution.log_prob(value)
-        if len(log_probs.shape) == 2:
-            assert log_probs.shape[-1] == 1
-            assert len(value.shape) == 2
-        else:
-            assert len(log_probs.shape) == 1
-            assert len(value.shape) == 1
-
-        log_probs = weight * log_probs
+        if len(log_probs.shape) > 1:
+            # - if multi-output with some relationship between outputs (e.g. categorical, mvnorm), then
+            #   log_prob will be 1D-like.
+            # - but if multi-output with no relationship between outputs, then log-prob will be 2d; the prob-per-row is
+            #   just the product of the individual probs. todo: handle nans in one but not all dims?
+            assert len(log_probs.shape) == 2
+            if log_probs.shape[-1] > 1:
+                assert len(value.shape) > 1 and value.shape[-1] == log_probs.shape[-1]
+                log_probs = log_probs.sum(1)
+            else:
+                log_probs = to_1d(log_probs)
+        assert len(log_probs.shape) == 1
+        log_probs = to_1d(weight) * log_probs
         return log_probs
 
     @staticmethod
