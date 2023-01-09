@@ -375,7 +375,10 @@ class Glm(BaseEstimator):
         """
         Get the penalized log prob, applying weights as needed.
         """
-        log_probs = self.family.log_prob(self.family(**self._get_family_kwargs(**x_dict)), **lp_dict)
+        log_probs = self.family.log_prob(
+            self.family(**self._get_family_kwargs(**x_dict)), # distribution(ilink(X \theta))
+            **lp_dict
+        )
         penalty = self._get_penalty() if include_penalty else 0.
         log_prob = log_probs.sum() - penalty
         if mean:
