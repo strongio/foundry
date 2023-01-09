@@ -386,11 +386,7 @@ class MarginalEffects:
                 assert predictions.shape[1] == 2
                 predictions = predictions[:, 1]
             elif not isinstance(predictions, pd.DataFrame):
-                raise RuntimeError(
-                    f"the `{self.predict_method}` method of the pipeline returned predictions with shape "
-                    f"{predictions.shape}. Only expect output to be not 1d-like if `predict_proba` was used "
-                    f"or if output is a dataframe."
-                )
+                predictions = pd.DataFrame(predictions, columns=[f'pred{i}' for i in range(predictions.shape[1])])
         # handle multi-output:
         if isinstance(predictions, pd.DataFrame):
             predictions = {k: v.values for k, v in predictions.to_dict(orient='series').items()}
