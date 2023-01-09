@@ -51,8 +51,8 @@ class Family:
 
     def __call__(self, **kwargs) -> torch.distributions.Distribution:
         dist_kwargs = {}
-        for p, ilink in self.params_and_links.items():
-            dist_kwargs[p] = ilink(kwargs.pop(p))
+        for p, inverse_link in self.params_and_links.items():
+            dist_kwargs[p] = inverse_link(kwargs.pop(p))
         dist_kwargs.update(kwargs)
         return self.distribution_cls(**dist_kwargs)
 
