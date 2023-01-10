@@ -16,23 +16,34 @@
 # +
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
 
 import foundry
 from foundry.glm import Glm
 from foundry.util import to_2d
 
-from data.uci import get_wine_dataset
+from data.uci import get_wine_dataset, get_online_news_dataset
 
 # -
 
-X, y = get_wine_dataset()
+X, y = get_online_news_dataset()
 
 
-breakpoint()
-Glm("categorical", ).fit(X, y.values)
+X_s = StandardScaler().fit(X).transform(X)
 
-y
+X_s.shape
 
-type(y)
+Glm("gaussian", ).fit(X_s, y.values / 10, max_iter=400)
+
+theta = np.array([[-0.5], [0.5], [3]])
+X = np.hstack([np.random.randn(100, 2), np.ones((100, 1))])
+
+eps = np.random.randn(100, 1)
+
+y = X @ theta + eps
+
+my_glm = Glm("gaussian", ).fit(X[:, :-1], y)
+
+my_glm._coef_mvnorm_.covariance_matrix
 
 
