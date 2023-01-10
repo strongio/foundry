@@ -11,6 +11,7 @@ import torch
 import torch.nn
 from torch import distributions
 from torch.distributions import transforms
+from torch.linalg import LinAlgError
 
 from sklearn.base import BaseEstimator
 from sklearn.preprocessing import LabelEncoder
@@ -277,7 +278,7 @@ class Glm(BaseEstimator):
              callbacks: Sequence[Callable] = (),
              stopping: Union['Stopping', tuple, dict] = (.001,),
              max_iter: int = 200,
-             max_loss: float = 10.,
+             max_loss: float = np.inf,
              verbose: bool = True,
              estimate_laplace_coefs: bool = True) -> 'Glm':
 
@@ -353,7 +354,7 @@ class Glm(BaseEstimator):
 
         if train_loss > max_loss:
             self._fit_failed += 1
-            raise FitFailedException(f"train_loss ({train_loss}) too high")
+            raise FitFailedException(f"train_loss ({train_loss}) too high, consider increasing max_loss ({max_loss})")
 
         self._fit_failed = 0
 
@@ -363,7 +364,13 @@ class Glm(BaseEstimator):
             try:
                 self.estimate_laplace_coefs(X=X, y=y, sample_weight=sample_weight)
             except KeyboardInterrupt:
+                print("Estimation laplace coefs interrupted")
                 pass
+            if self.converged_:
+                print("Estimating laplace coefs success!")
+            else:
+                print("Estimating laplace coefs failed! See warnings / errors.")
+
 
         return self
 
@@ -716,30 +723,34 @@ class Glm(BaseEstimator):
 
         # create mvnorm for laplace approx:
         with torch.no_grad():
-            fail_msg = ''
+
+            self.converged_ = False
+
             try:
-                cov = torch.inverse(hess)
-            except RuntimeError as e:
-                fail_msg = str(e)
+                # cov = torch.inverse(hess)  # Hello floating point errors my old friend.
+                cholesky_hess = torch.linalg.cholesky(hess) # This is way more numerically stable
+                inv_cholesky_hess = torch.linalg.inv(cholesky_hess)
+                cov = inv_cholesky_hess.T @ inv_cholesky_hess
 
-            if not fail_msg:
-                try:
-                    self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
-                        means, covariance_matrix=cov, validate_args=True
-                    )
-                    self.converged_ = True
-                except ValueError as e:
-                    if 'constraint PositiveDefinite' not in str(e):
-                        raise e
-                    fail_msg = str(e)
+                # if `hess` has one eigenvalue of zero, then the matrix will be non-invertible. This usually means one
+                # of the features is constant, or is completely colinear with another feature.
 
-            if fail_msg:
-                warn(f"Model failed to converge; ``laplace_params`` cannot be estimated."
-                     f"\nhess.diag():\n{hess.diag()}"
-                     f"\nfail msg:\n{fail_msg}")
-                fake_cov = torch.eye(hess.shape[0]) * 1e-10
+                # if `hess` is poorly conditioned, but is positive definite (PD), it may not remain PD after inversion.
+                # Using the Cholesky decomposition helps, but can still cause issues
+
+                # if `hess` is negative definite (ND), the model hasn't converged. Consider looking at the stopping criterion.
+
+                self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
+                    means, covariance_matrix=cov, validate_args=True
+                )
+
+                self.converged_ = True
+
+            except RuntimeError:
+                warn("Second order estimation of parameter distribution failed. Constructing approximate covariance.")
+                warn(f"\nfail_msg: \n{fail_msg}")
+                fake_cov = torch.diag(torch.diag(hess).pow(-1).clip(min=1E-5))
                 self._coef_mvnorm_ = torch.distributions.MultivariateNormal(means, covariance_matrix=fake_cov)
-                self.converged_ = False
 
     def _estimate_laplace_coefs(self,
                                 X: ModelMatrix,
