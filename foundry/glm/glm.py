@@ -261,6 +261,7 @@ class Glm(BaseEstimator):
         return probs
 
     def _init_family(self, family: Union[Family, str]) -> Family:
+        """ if family is a string, turns family to a Family. else return unchanged. """
         if isinstance(family, str):
             if family.startswith('survival'):
                 family = family.replace('survival', '').lstrip('_')

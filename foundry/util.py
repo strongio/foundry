@@ -98,6 +98,7 @@ def get_to_kwargs(x) -> dict:
 
 
 def is_invalid(x: torch.Tensor, reduce: bool = True) -> bool:
+    """ Checks for NaNs or infs in a tensor. Set reduce=False to return element-wise """
     if reduce:
         return torch.isinf(x).any() or torch.isnan(x).any()
     else:

@@ -62,9 +62,13 @@ class Family:
                          distribution: distributions.Distribution) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Standardize the shape of value and weight so they match the distribution
+
+        The shape of the returned value and weight depend on the batch_shape of the distribution.
         """
+        # Check for nans and infs
         self._raise_invalid_values(value)
 
+        # Evenly weighted if not defined
         if weight is None:
             weight = torch.ones_like(value)
 
@@ -77,10 +81,12 @@ class Family:
             value = to_2d(value)
             weight = to_2d(weight)
         else:
-            raise NotImplementedError
+            raise NotImplementedError("distribution batch_shape has more than 2 dimensions")
 
+        # Check that weights are strictly positive
         if (weight <= 0).any():
             raise ValueError("Some weight <= 0")
+        # Check that value and weight shapes are equal
         if weight.shape[0] != value.shape[0]:
             raise ValueError(f"weight.shape[0] is {weight.shape[0]} but value.shape[0] is {value.shape[0]}")
 
@@ -156,16 +162,19 @@ class Family:
 
 
 def _maybe_method(obj: any, method_nm: str, fallback_value: any = None, *args, **kwargs) -> any:
-    """
-    Try to call a method of an object. If it's not a method of that object, or its a NotImplemented method, return a
-     default value.
+    """ Get a method called with *args, **kwargs, from an object.
 
-    :param obj: Object
-    :param method_nm: Name of method
-    :param fallback_value: What to return if non-existent or not implemented.
-    :param args: Arguments to method
-    :param kwargs: Kwargs to method.
-    :return: Return value of method, or `fallback_value`.
+    This function gets the method specified by method_nm from the obj object.
+    If the method is not callable, or it is not a method of the object, the function returns the fallback_value.
+    Otherwise, the function attempts to call the method with *args and **kwargs and returns the returned value.
+    If there is a NotImplementedError, the function returns the fallback value.
+
+    :param obj: any object
+    :param method_nm: a string reperesenting the name of method
+    :param fallback_value: what to return if non-existent or not implemented.
+    :param args: a tuple of arguments to pass to the method
+    :param kwargs: a dic of kwargs to pass to the method.
+    :return: method(*args, **kwargs), or `fallback_value`.
     """
     method = getattr(obj, method_nm, False)
     if not method or not callable(method):
