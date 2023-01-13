@@ -578,7 +578,7 @@ class Glm(BaseEstimator):
             return tqdm(total=max_eval)
         return None
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def score(self, X: ModelMatrix, y: ModelMatrix, sample_weight: Optional[np.ndarray] = None) -> float:
         """
         Uses log_prob (without penalty) for scoring.
@@ -586,7 +586,7 @@ class Glm(BaseEstimator):
         x_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
         return self.get_log_prob(x_dict, lp_dict, mean=True, include_penalty=False).item()
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def predict(self,
                 X: ModelMatrix,
                 type: Optional[str] = None,
@@ -668,7 +668,7 @@ class Glm(BaseEstimator):
         if self._coef_mvnorm_ is None:
             raise RuntimeError("Must call ``estimate_laplace_coefs()`` first.")
         out = []
-        with torch.no_grad():
+        with torch.inference_mode():
             ses = self._coef_mvnorm_.covariance_matrix.diag().sqrt()
             for name, estimate, se in zip(self._laplace_coefs_names_, self._coef_mvnorm_.mean, ses):
                 estimate = estimate.item()
@@ -682,8 +682,8 @@ class Glm(BaseEstimator):
         self._laplace_coefs_names_, means, hess = self._estimate_laplace_coefs(X=X, y=y, sample_weight=sample_weight)
 
         # create mvnorm for laplace approx:
-        with torch.no_grad():
-            self.converged_ = False
+        self.converged_ = False
+        with torch.inference_mode():
             try:
                 cholesky_hess = torch.linalg.cholesky(hess)
                 self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
