@@ -10,6 +10,8 @@ from typing import Callable, Sequence, Union
 
 from tqdm.auto import tqdm
 
+from foundry.util import to_1d
+
 
 class Binned:
     def __init__(self, col: str, bins: Union[int, Sequence] = 20, **kwargs):
@@ -382,16 +384,21 @@ class MarginalEffects:
         # validate output:
         if len(predictions.shape) > 1 and predictions.shape[1] > 1:
             assert len(predictions.shape) == 2
-            if self.predict_method == 'predict_proba':
-                assert predictions.shape[1] == 2
+            if self.predict_method == 'predict_proba' and predictions.shape[1] == 2:
+                # handle common case of 2-class prediction, only plot p(positive-class)
                 predictions = predictions[:, 1]
             elif not isinstance(predictions, pd.DataFrame):
-                predictions = pd.DataFrame(predictions, columns=[f'pred{i}' for i in range(predictions.shape[1])])
+                predictions = pd.DataFrame(predictions)
+                if self.predict_method == 'predict_proba':
+                    predictions.columns = [f'class{i}' for i in range(predictions.shape[1])]
+                else:
+                    predictions.columns = [f'pred{i}' for i in range(predictions.shape[1])]
+
         # handle multi-output:
         if isinstance(predictions, pd.DataFrame):
             predictions = {k: v.values for k, v in predictions.to_dict(orient='series').items()}
         else:
-            predictions = {'predicted': predictions}
+            predictions = {'predicted': to_1d(predictions)}
 
         return predictions
 
