@@ -284,7 +284,8 @@ class Glm(BaseEstimator):
              verbose: bool = True,
              estimate_laplace_coefs: bool = True) -> 'Glm':
 
-        print("Estimating model parameters")
+        if verbose:
+            print("Estimating model parameters")
 
         # tallying fit-failurs:
         if self._fit_failed:
@@ -364,7 +365,8 @@ class Glm(BaseEstimator):
 
         self._fit_failed = 0
 
-        print("Estimating model parameters success!")
+        if verbose:
+            print("Estimating model parameters success!")
 
         if estimate_laplace_coefs:
             if verbose:
@@ -372,13 +374,15 @@ class Glm(BaseEstimator):
             try:
                 self.estimate_laplace_coefs(X=X, y=y, sample_weight=sample_weight)
             except KeyboardInterrupt:
-                print("Estimation laplace coefs interrupted")
+                if verbose:
+                    print("Estimation laplace coefs interrupted")
 
+
+        if estimate_laplace_coefs and verbose:
             if self.converged_:
                 print("Estimating laplace coefs success!")
             else:
                 print("Estimating laplace coefs unsuccessful! See warnings / errors.")
-
 
         return self
 
