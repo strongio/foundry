@@ -248,6 +248,7 @@ class ToCategorical(TransformerMixin, BaseEstimator):
         for col in X.columns:
             if fit_:
                 out[col] = X[col].astype('category')
+                # TODO: lgbm doesn't like categories that are intervals (as in ``pd.cut``)
             else:
                 out[col] = X[col].astype(pd.CategoricalDtype(categories=self.categories_[col]))
 
