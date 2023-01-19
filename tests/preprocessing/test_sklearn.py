@@ -8,6 +8,7 @@ from pandas.core.arrays import SparseArray
 from pandas.testing import assert_frame_equal
 from scipy.sparse import spmatrix, coo_matrix
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.exceptions import NotFittedError
 
 from foundry.preprocessing import make_column_selector, InteractionFeatures, DataFrameTransformer, ColumnDropper
 
@@ -128,7 +129,7 @@ class TestInteractionFeatures:
                 id='not-present',
             ),
             pytest.param(
-                [('col1', lambda x: ['col2', 'col3']), ('col1', 'col4')],
+                [('col1', lambda _: ['col2', 'col3']), ('col1', 'col4')],
                 [('col1', 'col2'), ('col1', 'col3'), ('col1', 'col4')],
                 id='with_callable'
             ),
@@ -149,6 +150,7 @@ class TestInteractionFeatures:
         estimator = InteractionFeatures(interactions=interactions, no_selection_handling='raise')
         if isinstance(expected, list):
             assert estimator.fit(X=X).unrolled_interactions_ == expected
+            assert all(estimator.feature_names_in_ == X.columns)
         else:
             with pytest.raises(expected):
                 estimator.fit(X=X)
@@ -216,6 +218,7 @@ class TestInteractionFeatures:
         instance = create_autospec(InteractionFeatures, instance=True)
         instance.sep = ":"
         instance.unrolled_interactions_ = unrolled_interactions
+        instance.feature_names_in_ = X if isinstance(X, list) else X.columns
 
         if isinstance(X, list):
             X = pd.DataFrame(columns=X)
@@ -227,6 +230,50 @@ class TestInteractionFeatures:
             pd.testing.assert_frame_equal(result, expected)
             if hasattr(X, 'sparse'):
                 assert result['a:b'].sparse.density < 1
+
+            assert all(InteractionFeatures.get_feature_names_out(instance) == expected.columns)
         else:
             with pytest.raises(expected):
                 InteractionFeatures.transform(instance, X=X)
+
+
+    @pytest.mark.parametrize(
+        argnames=['unrolled_interactions', 'x_cols', 'expected'],
+        argvalues=[
+            pytest.param(
+                [('col1', 'col2')],
+                ['col1', 'col2', 'col3'],
+                ['col1', 'col2', 'col3', 'col1:col2'],
+                id='simple'
+            ),
+            pytest.param(
+                [('col1', 'col2'), ('col1', 'col3'), ('col1', 'col4')],
+                ['col1', 'col2', 'col3', 'col4'],
+                ['col1', 'col2', 'col3', 'col4', 'col1:col2', 'col1:col3', 'col1:col4'],
+                id='simple2'
+            ),
+            pytest.param(
+                [('col1', 'col2')],
+                None,
+                NotFittedError,
+                id='unfitted'
+            ),
+            pytest.param(
+                [('col1', 'col2')],
+                ['col1', 'col2', 'col1:col2'],
+                ['col1', 'col2', 'col1:col2'],
+                id='pre-existing'
+            ),
+        ]
+    )
+    def test_get_feature_names_out(self, unrolled_interactions: list, x_cols: list, expected: Union[list, Type[Exception]]):
+        instance = create_autospec(InteractionFeatures, instance=True)
+        instance.sep = ":"
+        instance.unrolled_interactions_ = unrolled_interactions
+        instance.feature_names_in_ = x_cols
+
+        if isinstance(expected, list):
+            assert InteractionFeatures.get_feature_names_out(instance) == expected
+        else:
+            with pytest.raises(expected):
+                InteractionFeatures.get_feature_names_out(instance)

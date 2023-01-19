@@ -9,6 +9,7 @@ from scipy import sparse
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.compose import make_column_selector as make_column_selector_sklearn
+from sklearn.exceptions import NotFittedError
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import FunctionTransformer as FunctionTransformerBase
 
@@ -61,9 +62,11 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
         self.sep = sep
         self.unrolled_interactions_ = None
         self.no_selection_handling = no_selection_handling
+        self.feature_names_in_ = None
 
     def fit(self, X: pd.DataFrame, y=None) -> 'InteractionFeatures':
         assert not X.empty
+        self.feature_names_in_ = X.columns
         self.no_selection_handling = self.no_selection_handling.lower()
         assert self.no_selection_handling in {'raise', 'warn', 'ignore'}
 
@@ -107,30 +110,46 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
                     continue
                 unrolled_interactions.append(interaction)
         self.unrolled_interactions_ = unrolled_interactions
+
         return self
 
     def transform(self, X: pd.DataFrame, y=None) -> pd.DataFrame:
         available_cols = set(X.columns)
 
         new_cols = {}
-        for interaction in self.unrolled_interactions_:
-            if len(interaction) < 2:
+        for interaction_column_names in self.unrolled_interactions_:
+            if len(interaction_column_names) < 2:
                 continue
-            new_colname = self.sep.join(interaction)
+            if not set(interaction_column_names).issubset(available_cols):
+                raise RuntimeError(f"Columns {interaction_column_names} in `interactions`, but not in columns:\n{available_cols}")
+
+            new_colname = self.sep.join(interaction_column_names)
             if new_colname in X.columns:
                 warn(f"{new_colname} is duplicated.")
 
             new_cols[new_colname] = None
-            for col in interaction:
-                if col not in available_cols:
-                    raise RuntimeError(f"{col} in `interactions`, but not in columns:\n{available_cols}")
+            for col in interaction_column_names:
                 new_cols[new_colname] = _sparse_safe_multiply(new_cols[new_colname], X[col].values)
 
-        df_new_cols = pd.DataFrame(new_cols)
-        df_new_cols.index = X.index
+
+        df_new_cols = pd.DataFrame(new_cols, index=X.index)
 
         return X.drop(columns=X.columns[X.columns.isin(new_cols)]).join(df_new_cols)
 
+    def get_feature_names_out(self):
+        if self.feature_names_in_ is None:
+            raise NotFittedError(f"This {self.__class__.__name__} is not fitted. Cannot retrieve get_feature_names_out.")
+
+        feature_names_out = list(self.feature_names_in_)
+        for interaction_column_names in self.unrolled_interactions_:
+            if len(interaction_column_names) < 2:
+                continue
+            new_col = self.sep.join(interaction_column_names)
+            if new_col in feature_names_out:
+                feature_names_out.remove(new_col) # If the column is already in X, we drop it
+            feature_names_out.append(new_col)
+
+        return feature_names_out
 
 def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series) -> Union[SparseArray, pd.Series]:
     if old_vals is None:
