@@ -18,13 +18,26 @@ from foundry.util import to_2d, ToSliceDict
 from tests.util import assert_dict_of_tensors_equal, assert_scalars_equal, assert_tensors_equal
 
 
-def test_categorical_integration():
-    y = pd.Series([0] * 3 + [1] * 2 + [2] * 5, name='cat').to_frame()
+@pytest.mark.parametrize(
+    argnames=['family'],
+    argvalues=[('normal',), ('mvnorm',), ('categorical',)]
+)
+def test_multi_output_integration(family: str):
+    if family == 'categorical':
+        y = pd.Series([0] * 3 + [1] * 2 + [2] * 5, name='cat').to_frame()
+    else:
+        y = pd.DataFrame({
+            'y1': [0, 1, 2.5, 1.],
+            'y2': [0, 2, 1, -1]
+        })
+    glm = Glm(family=family)
     X = pd.DataFrame(index=y.index)
-    glm = Glm(family='categorical')
     glm.fit(X=X, y=y, verbose=False)
-    assert set(glm.predict(X=X)) == {2}
-    np.testing.assert_allclose(glm.predict_proba(X=X).mean(0), np.asarray([.30, .20, .50]), atol=.001)
+    if family == 'categorical':
+        assert set(glm.predict(X=X)) == {2}
+        np.testing.assert_allclose(glm.predict_proba(X=X).mean(0), np.asarray([.30, .20, .50]), atol=.001)
+    else:
+        np.testing.assert_allclose(glm.predict(X).mean(0), y.mean(), atol=.001)
 
 
 @pytest.mark.parametrize(

@@ -7,11 +7,10 @@ from unittest.mock import Mock, patch, MagicMock
 
 import pytest
 import torch.distributions
-from torch.distributions import Bernoulli
 
 from foundry.glm import Glm
 from foundry.glm.family import Family
-from foundry.glm.glm import _softmax_kp1
+from foundry.glm.glm import SoftmaxKp1
 
 from tests.glm.distribution.util import assert_dist_equal
 from tests.util import assert_tensors_equal
@@ -202,7 +201,9 @@ def test__validate_values(input: tuple,
                           expected_output: tuple,
                           expected_exception: Optional[Type[Exception]]):
     torch_distribution = Mock()
+    # todo: parameterize these:
     torch_distribution.batch_shape = (3, 1)
+    torch_distribution.event_shape = ()
     family = Family(torch_distribution, params_and_links={'probs' : lambda x: x})
     if expected_exception:
         with pytest.raises(expected_exception):
@@ -221,5 +222,6 @@ def test__validate_values(input: tuple,
         (torch.tensor([1.]), torch.tensor([.7311, .2689])),
     ]
 )
-def test__softmax_kp1(input: torch.Tensor, expected_output: torch.Tensor):
+def test_softmax_kp1(input: torch.Tensor, expected_output: torch.Tensor):
+    _softmax_kp1 = SoftmaxKp1()
     assert_tensors_equal(_softmax_kp1(input), expected_output, tol=.0001)
