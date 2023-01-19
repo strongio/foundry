@@ -3,61 +3,44 @@ from warnings import warn
 
 import torch
 from torch import distributions
-from torch.distributions import transforms
 
 from .util import log1mexp
-from foundry.util import to_2d, is_invalid
+from foundry.util import to_2d, is_invalid, to_1d
 
 
 class Family:
     """
     Combines a link-function and a torch family for use in a GLM.
     """
-    aliases = {
-        'binomial': (
-            distributions.Binomial,
-            {'probs': transforms.SigmoidTransform()},
-        ),
-        'poisson': (
-            distributions.Poisson,
-            {'rate': transforms.ExpTransform()}
-        ),
-        'negative_binomial': (
-            distributions.NegativeBinomial,
-            {'probs': transforms.SigmoidTransform(), 'total_count': transforms.ExpTransform()}
-        ),
-        'exponential': (
-            torch.distributions.Exponential,
-            {
-                'rate': transforms.ExpTransform(),
-            }
-        ),
-        'weibull': (
-            torch.distributions.Weibull,
-            {
-                'scale': transforms.ExpTransform(),
-                'concentration': transforms.ExpTransform()
-            }
-        ),
-        'gaussian': (
-            torch.distributions.Normal,
-            {
-                'loc': transforms.identity_transform,
-                'scale': transforms.ExpTransform()
-            }
-        )
-    }
-
-    @classmethod
-    def from_name(cls, name: str, **kwargs) -> 'Family':
-        args = cls.aliases[name]
-        return cls(*args, **kwargs)
 
     def __init__(self,
                  distribution_cls: Type[torch.distributions.Distribution],
-                 params_and_links: Dict[str, Callable]):
+                 params_and_links: Dict[str, Callable],
+                 supports_predict_proba: Optional[bool] = None):
+        """
+
+        :param distribution_cls: A distribution class.
+        :param params_and_links: A dictionary whose keys are names of distribution-parameters (i.e. init-args for the
+         distribution-class and values are (inverse-)link functions.
+        :param supports_predict_proba: Does this distribution support predicting probabilities for its values? Default
+         is determined by whether the distribution has a ``probs`` attribute.
+        """
         self.distribution_cls = distribution_cls
         self.params_and_links = params_and_links
+
+        # supports_predict_proba:
+        has_probs_attr = hasattr(self.distribution_cls, 'probs')
+        if supports_predict_proba is None:
+            supports_predict_proba = has_probs_attr
+        if supports_predict_proba and not has_probs_attr:
+            raise TypeError(
+                f"`supports_predict_proba=True`, but {self.distribution_cls.__name__} doesn't have a `probs` attr."
+            )
+        self.supports_predict_proba = supports_predict_proba
+
+        # if distribution has `total_count` (binomial/multinomial) then we can't fully support classification;
+        # e.g. it doesn't make sense to train on or predict classes b/c these don't capture heterogenous counts
+        self.has_total_count = hasattr(self.distribution_cls, 'total_count')
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.distribution_cls.__name__})"
@@ -73,29 +56,31 @@ class Family:
         dist_kwargs.update(kwargs)
         return self.distribution_cls(**dist_kwargs)
 
-    @classmethod
-    def _validate_values(cls,
+    def _validate_values(self,
                          value: torch.Tensor,
                          weight: Optional[torch.Tensor],
                          distribution: distributions.Distribution) -> Tuple[torch.Tensor, torch.Tensor]:
-        value = to_2d(value)
-
-        cls._raise_invalid_values(value)
+        """
+        Standardize the shape of value and weight so they match the distribution
+        """
+        self._raise_invalid_values(value)
 
         if weight is None:
             weight = torch.ones_like(value)
-        else:
-            if (weight <= 0).any():
-                raise ValueError("Some weight <= 0")
+
+        if len(distribution.batch_shape) == 1:
+            value = to_1d(value)
+            weight = to_1d(weight)
+        elif len(distribution.batch_shape) == 2:
+            value = to_2d(value)
             weight = to_2d(weight)
-            if weight.shape[0] != value.shape[0]:
-                raise ValueError(f"weight.shape[0] is {weight.shape[0]} but value.shape[0] is {value.shape[0]}")
+        else:
+            raise NotImplementedError
 
-        if len(distribution.batch_shape) != 2:
-            raise ValueError(f"distribution.batch_shape should be 2D, but it's {distribution.batch_shape}")
-
-        if distribution.batch_shape != value.shape:
-            raise ValueError(f"distribution.batch_shape is {distribution.batch_shape} but value.shape is {value.shape}")
+        if (weight <= 0).any():
+            raise ValueError("Some weight <= 0")
+        if weight.shape[0] != value.shape[0]:
+            raise ValueError(f"weight.shape[0] is {weight.shape[0]} but value.shape[0] is {value.shape[0]}")
 
         return value, weight
 
@@ -108,12 +93,22 @@ class Family:
                  distribution: torch.distributions.Distribution,
                  value: torch.Tensor,
                  weight: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Return a 1d array of log-probs, one for each row in ``value``.
+        """
 
         value, weight = self._validate_values(value, weight, distribution)
 
         # TODO: support discretized
 
         log_probs = distribution.log_prob(value)
+        if len(log_probs.shape) == 2:
+            assert log_probs.shape[-1] == 1
+            assert len(value.shape) == 2
+        else:
+            assert len(log_probs.shape) == 1
+            assert len(value.shape) == 1
+
         log_probs = weight * log_probs
         return log_probs
 

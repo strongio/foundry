@@ -126,11 +126,13 @@ class SliceDict(dict):
 class ToSliceDict(TransformerMixin, BaseEstimator):
     """
     Many distributions have multiple parameters: for example the normal distribution has a location and scale
-    parameter. We configure which predictors should handle which dist-params in :class:`foundry.glm.Glm.fit` by passing
+    parameter. We configure which predictors should handle which dist-params in :class:`foundry.glm.Glm` by passing
     a dictionary for X, with keys being arguments to the distribution, and values being model-matrices. This class
     enables us to configure this behavior within a pipeline, for example:
 
     >>> make_pipeline(ToSliceDict(['loc','scale']), Glm(family='gaussian'))
+
+    :class:`foundry.glm.Glm` also supports this specification via the ``col_mapping`` argument.
 
     :param mapping: This can be either a list or a dictionary. For example, ``mapping=['loc','scale']`` will create a
      dict with the full model-matrix assigned to both params. A dictionary allows finer-grained control, e.g.:
