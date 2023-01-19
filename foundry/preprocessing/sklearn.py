@@ -117,7 +117,7 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
             if len(interaction) < 2:
                 continue
             new_colname = self.sep.join(interaction)
-            if new_colname in X.columns and new_colname not in available_cols:
+            if new_colname in X.columns:
                 warn(f"{new_colname} is duplicated.")
 
             new_cols[new_colname] = None
