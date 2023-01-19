@@ -54,6 +54,11 @@ class SigmoidTransformForClassification(transforms.SigmoidTransform):
         return y_dim - 1
 
 
+class SigmoidTransformForClassification(transforms.SigmoidTransform):
+    def get_param_dim(self, y_dim: int) -> int:
+        return y_dim - 1
+
+
 class Glm(BaseEstimator):
     """
     :param family: A family name; you can see available names with ``Glm.family_names``. (Advanced: you can also pass
