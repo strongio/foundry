@@ -23,6 +23,7 @@ setuptools.setup(
             'notebook',
             'pytest',
             'requests',
+            'plotnine',
         ]
     }
 )
