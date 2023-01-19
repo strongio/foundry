@@ -133,6 +133,11 @@ class TestInteractionFeatures:
                 id='with_callable'
             ),
             pytest.param(
+                [('col1', 'col1')],
+                [('col1', 'col1')],
+                id='paired-feature',
+            ),
+            pytest.param(
                 [('col1', make_column_selector(pattern='unmatched'))],
                 RuntimeError,
                 id='callable_returns_nothing',
