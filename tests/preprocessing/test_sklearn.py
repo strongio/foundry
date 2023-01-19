@@ -134,7 +134,7 @@ class TestInteractionFeatures:
             ),
             pytest.param(
                 [('col1', 'col1')],
-                [('col1', 'col1')],
+                [],
                 id='paired-feature',
             ),
             pytest.param(
