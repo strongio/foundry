@@ -27,6 +27,17 @@ def test_categorical_integration():
     np.testing.assert_allclose(glm.predict_proba(X=X).mean(0), np.asarray([.30, .20, .50]), atol=.001)
 
 
+@pytest.mark.parametrize(
+    argnames=['family'],
+    argvalues=[('categorical',), ('bernoulli',)]
+)
+def test_classification_integration(family: str):
+    y = pd.Series([0] * 3 + [1] * 2, name='cat').to_frame()
+    glm = Glm(family=family)
+    X = pd.DataFrame(index=y.index)
+    glm.fit(X=X, y=y, verbose=False)
+
+
 class _FakeDist:
     arg_constraints = {
         'param1': constraints.real,

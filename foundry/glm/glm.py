@@ -43,6 +43,11 @@ def _softmax_kp1(x: torch.Tensor) -> torch.Tensor:
     return torch.softmax(x_p1, -1)
 
 
+class SigmoidTransformForClassification(transforms.SigmoidTransform):
+    def get_param_dim(self, y_dim: int) -> int:
+        return y_dim - 1
+
+
 class Glm(BaseEstimator):
     """
     :param family: A family name; you can see available names with ``Glm.family_names``. (Advanced: you can also pass
@@ -65,7 +70,7 @@ class Glm(BaseEstimator):
     family_names = {
         'bernoulli': (
             distributions.Bernoulli,
-            {'probs': transforms.SigmoidTransform()},
+            {'probs': SigmoidTransformForClassification()},
         ),
         'binomial': (
             distributions.Binomial,
@@ -414,7 +419,7 @@ class Glm(BaseEstimator):
             # special handling for classification:
             if k == 'value' and self.label_encoder_ is not None:
                 ydict['value'] = self.label_encoder_.transform(ydict['value'])
-                ydict['value'] = to_tensor(ydict['value'], dtype=torch.long, device=_to_kwargs['device'])
+                ydict['value'] = to_tensor(ydict['value'], **_to_kwargs)
                 continue
 
             # standard handling:
