@@ -22,6 +22,7 @@ class TestFamily:
         alias: str
         call_input: dict
         expected_supports_predict_proba: bool
+        expected_has_total_count: bool
         expected_call_output: torch.distributions.Distribution
 
     @dataclass
@@ -29,15 +30,24 @@ class TestFamily:
         family: Family
         call_input: dict
         expected_supports_predict_proba: bool
+        expected_has_total_count: bool
         expected_call_output: torch.distributions.Distribution
 
     @pytest.fixture(
         ids=lambda x: x.alias,
         params=[
             Params(
+                alias='bernoulli',
+                call_input={'probs': torch.tensor([0., 1.]).unsqueeze(-1)},
+                expected_supports_predict_proba=True,
+                expected_has_total_count=False,
+                expected_call_output=torch.distributions.Bernoulli(probs=torch.tensor([.5, 0.7311]).unsqueeze(-1)),
+            ),
+            Params(
                 alias='binomial',
                 call_input={'probs': torch.tensor([0., 1.]).unsqueeze(-1)},
                 expected_supports_predict_proba=True,
+                expected_has_total_count=True,
                 expected_call_output=torch.distributions.Binomial(probs=torch.tensor([.5, 0.7311]).unsqueeze(-1)),
             ),
             Params(
@@ -47,6 +57,7 @@ class TestFamily:
                     'total_count': torch.tensor([0., 1.]).unsqueeze(-1)
                 },
                 expected_supports_predict_proba=False,
+                expected_has_total_count=True,
                 expected_call_output=torch.distributions.NegativeBinomial(
                     probs=torch.tensor([.5, 0.7311]).unsqueeze(-1),
                     total_count=torch.tensor([1., math.e]).unsqueeze(-1)
@@ -59,6 +70,7 @@ class TestFamily:
                     'concentration': torch.tensor([0., 0.]).unsqueeze(-1)
                 },
                 expected_supports_predict_proba=False,
+                expected_has_total_count=False,
                 expected_call_output=torch.distributions.Weibull(
                     scale=torch.tensor([1., math.exp(1.)]).unsqueeze(-1),
                     concentration=torch.ones(2).unsqueeze(-1)
@@ -70,8 +82,12 @@ class TestFamily:
             family=Glm._init_family(Glm, request.param.alias),
             call_input=request.param.call_input,
             expected_call_output=request.param.expected_call_output,
+            expected_has_total_count=request.param.expected_has_total_count,
             expected_supports_predict_proba=request.param.expected_supports_predict_proba
         )
+
+    def test_has_total_count(self, setup: Fixture):
+        assert setup.family.has_total_count == setup.expected_has_total_count
 
     def test_supports_predict_proba(self, setup: Fixture):
         assert setup.family.supports_predict_proba == setup.expected_supports_predict_proba

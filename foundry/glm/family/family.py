@@ -1,3 +1,4 @@
+import inspect
 from typing import Callable, Dict, Type, Optional, Tuple, Sequence
 from warnings import warn
 
@@ -40,7 +41,10 @@ class Family:
 
         # if distribution has `total_count` (binomial/multinomial) then we can't fully support classification;
         # e.g. it doesn't make sense to train on or predict classes b/c these don't capture heterogenous counts
-        self.has_total_count = hasattr(self.distribution_cls, 'total_count')
+        init_argnames = set(
+            p.name for p in inspect.signature(self.distribution_cls.__init__).parameters.values()
+        )
+        self.has_total_count = 'total_count' in init_argnames
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.distribution_cls.__name__})"
