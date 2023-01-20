@@ -19,39 +19,19 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from tqdm import tqdm
 
 from foundry.covariance import Covariance
-from foundry.glm.family import Family, CeilingWeibull
-from foundry.glm.family.survival import SurvivalFamily
-from foundry.glm.util import NoWeightModule, Stopping
 from foundry.hessian import hessian
 from foundry.penalty import L2
+
+from .family import Family, CeilingWeibull
+from .family.survival import SurvivalFamily
+from .util import NoWeightModule, Stopping, SigmoidTransformForClassification, Multinomial, SoftmaxKp1
+
 from foundry.util import (
     FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d, is_array, ModelMatrix, ToSliceDict
 )
 from sklearn.exceptions import NotFittedError
 
 N_FIT_RETRIES = int(os.getenv('GLM_N_FIT_RETRIES', 10))
-
-
-class SoftmaxKp1:
-    """
-    Given logits corresponding to the probabilities of K classes, convert to class-probabilities for K+1 classes.
-
-    :param x: A tensor of logits whose final dim indexes the class
-    :return: A tensor of probs with the same shape as the input, except the last dim is one longer.
-    """
-
-    def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        *leading_dims, n_classes = x.shape
-        x_p1 = torch.cat([x, torch.zeros(*leading_dims, 1, dtype=x.dtype, device=x.device)], -1)
-        return torch.softmax(x_p1, -1)
-
-    def get_param_dim(self, y_dim: int) -> int:
-        return y_dim - 1
-
-
-class SigmoidTransformForClassification(transforms.SigmoidTransform):
-    def get_param_dim(self, y_dim: int) -> int:
-        return y_dim - 1
 
 
 class Glm(BaseEstimator):
@@ -89,7 +69,7 @@ class Glm(BaseEstimator):
             {'probs': SoftmaxKp1()}
         ),
         'multinomial': (
-            distributions.Multinomial,
+            Multinomial,
             {'probs': SoftmaxKp1()}
         ),
         'poisson': (

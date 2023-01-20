@@ -10,7 +10,7 @@ import torch.distributions
 
 from foundry.glm import Glm
 from foundry.glm.family import Family
-from foundry.glm.glm import SoftmaxKp1
+from foundry.glm.util import SoftmaxKp1
 
 from tests.glm.distribution.util import assert_dist_equal
 from tests.conftest import assert_tensors_equal

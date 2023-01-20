@@ -51,6 +51,27 @@ def test_classification_integration(family: str):
     glm.fit(X=X, y=y, verbose=False)
 
 
+@pytest.mark.parametrize(
+    argnames=['family'],
+    argvalues=[('binomial',), ('multinomial',)]
+)
+def test_predict_proba_but_not_classification_integration(family: str):
+    if family == 'binomial':
+        y = {
+            'value': pd.Series(([0] * 3) + ([1] * 2), name='success'),
+        }
+    else:
+        y = {
+            'value': pd.get_dummies(([0] * 3) + ([1] * 2) + ([2] * 3))
+        }
+    glm = Glm(family=family)
+    X = {
+        'probs': pd.DataFrame(index=y['value'].index),
+        'total_count': np.ones((len(y['value']), 1))
+    }
+    glm.fit(X=X, y=y, verbose=False)
+
+
 class _FakeDist:
     arg_constraints = {
         'param1': constraints.real,
