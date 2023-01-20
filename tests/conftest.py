@@ -7,6 +7,10 @@ from foundry.util import ArrayType
 
 def assert_tensors_equal(x: torch.Tensor, y: torch.Tensor, tol: float = 0., prefix: str = ''):
     assert x.shape == y.shape, f"{prefix}shape did not match"
+    assert x.is_sparse == y.is_sparse, f"{prefix}one but not both of the tensors is sparse"
+    if x.is_sparse:
+        x = x.to_dense()
+        y = y.to_dense()
     if not tol:
         assert (x == y).all(), f"{prefix}some values did not match"
     else:

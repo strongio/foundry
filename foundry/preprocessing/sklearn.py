@@ -1,9 +1,10 @@
 import itertools
-from typing import Callable, Iterable, Optional, Sequence, Tuple, Union
+from typing import Callable, Iterable, Optional, Sequence, Tuple, Union, Collection
 from warnings import warn
 
 import numpy as np
 import pandas as pd
+from pandas.core.arrays import SparseArray
 from scipy import sparse
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
@@ -24,8 +25,7 @@ class DataFrameTransformer(ColumnTransformer):
     @classmethod
     def _convert_single_transform_to_df(cls, X) -> pd.DataFrame:
         if sparse.issparse(X):
-            warn(f"sparse output not suported in {cls.__name__}")
-            X = X.toarray()
+            return pd.DataFrame.sparse.from_spmatrix(X)
         if isinstance(X, pd.DataFrame):
             X.reset_index(drop=True, inplace=True)
         else:
@@ -116,23 +116,47 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
         for interaction in self.unrolled_interactions_:
             if len(interaction) < 2:
                 continue
-            new_col = self.sep.join(interaction)
-            if new_col in X.columns and new_col not in available_cols:
-                warn(f"{new_col} is duplicated.")
-            # TODO: support non-numeric
-            new_cols[new_col] = 1.0
+            new_colname = self.sep.join(interaction)
+            if new_colname in X.columns and new_colname not in available_cols:
+                warn(f"{new_colname} is duplicated.")
+
+            new_cols[new_colname] = None
             for col in interaction:
                 if col not in available_cols:
                     raise RuntimeError(f"{col} in `interactions`, but not in columns:\n{available_cols}")
-                new_cols[new_col] *= X[col].values
+                new_cols[new_colname] = _sparse_safe_multiply(new_cols[new_colname], X[col].values)
 
         df_new_cols = pd.DataFrame(new_cols)
         df_new_cols.index = X.index
 
-        return pd.concat([
-            X.drop(columns=X.columns[X.columns.isin(new_cols)]),
-            df_new_cols
-        ], axis=1)
+        return X.drop(columns=X.columns[X.columns.isin(new_cols)]).join(df_new_cols)
+
+
+def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series) -> Union[SparseArray, pd.Series]:
+    if old_vals is None:
+        return new_vals.copy()
+
+    # because sparse-arrays allow for any fill-value, they don't leverage the fact that
+    # sparse*sparse only needs to capture the intersection of the two; instead, they fill the union.
+    old_is_sparse = pd.api.types.is_sparse(old_vals)
+    new_is_sparse = pd.api.types.is_sparse(new_vals)
+    if new_is_sparse and old_is_sparse:
+        index_intersection = old_vals.sp_index.intersect(new_vals.sp_index)
+        assert new_vals.fill_value == old_vals.fill_value == 0
+    elif new_is_sparse:
+        index_intersection = new_vals.sp_index
+        assert new_vals.fill_value == 0
+    elif old_is_sparse:
+        index_intersection = old_vals.sp_index
+        assert old_vals.fill_value == 0
+    else:
+        old_vals *= new_vals
+        return old_vals
+    product = (
+            old_vals[index_intersection.to_int_index().indices] *
+            new_vals[index_intersection.to_int_index().indices]
+    )
+    return SparseArray(data=product, sparse_index=index_intersection, fill_value=0.)
 
 
 class FunctionTransformer(FunctionTransformerBase):
@@ -193,40 +217,46 @@ class make_column_selector(make_column_selector_sklearn):
         return f"make_column_selector(pattern={self.pattern}, dtype_include={self.dtype_include}, dtype_exclude={self.dtype_exclude})"
 
 
-def make_drop_transformer(
-        names: Optional[Union[str, Iterable[str]]] = None,
-        pattern: Optional[str] = None
-):
+class ColumnDropper(TransformerMixin, BaseEstimator):
     """
-    Returns a DataFrameTranformer (i.e. a ColumnTransformer) that drops a subset of features.
-
-    Useful when you want certain downstream paths of the sklearn pipeline to use different features than each other.
-
-    names: the name or names of features to drop
-    regex: the pattern to match for features to drop
+    Drop columns based on a name, pattern, and/or zero-variance
     """
-    kwargs = {
-        "remainder": "passthrough",  # we specify which columns to drop, the rest stay.
-        "verbose_feature_names_out": False,  # don't add the "remainder__" prefix to the undropped columns
-    }
-    if names is None and pattern is None:
-        return DataFrameTransformer(transformers=[], **kwargs)
-    if names and pattern:
-        raise ValueError("Both names and regex defined for drop_transformer. Only one may be defined.")
 
-    # regex part
-    if pattern is not None:
-        return DataFrameTransformer(
-            transformers=[
-                ("drop", "drop", make_column_selector(pattern))
-            ],
-            **kwargs
-        )
-    # names part
-    else:
-        return DataFrameTransformer(
-            transformers=[
-                ("drop", "drop", names)
-            ],
-            **kwargs
-        )
+    def __init__(self,
+                 names: Collection[str] = (),
+                 pattern: Optional[str] = None,
+                 drop_zero_var: bool = True
+                 ):
+        self.names = names
+        self.pattern = pattern
+        self.drop_zero_var = drop_zero_var
+        self.drop_cols_ = None
+
+    def fit(self, X: pd.DataFrame, y=None) -> 'ColumnDropper':
+        if self.names and self.pattern:
+            raise ValueError("Both names and regex defined. Only one may be defined.")
+        elif self.pattern:
+            self.drop_cols_ = make_column_selector(pattern=self.pattern)(X)
+            if not self.drop_cols_:
+                warn(f"pattern `{self.pattern}` returned no columns.")
+        else:
+            # avoid weirdness if they passed a string or generator:
+            self.names = [self.names] if isinstance(self.names, str) else list(self.names)
+            unmatched = set(self.names) - set(X.columns)
+            if unmatched:
+                raise RuntimeError(f"Some `names` not in X: {unmatched}")
+            self.drop_cols_ = list(self.names)
+
+        if self.drop_zero_var:
+            zero_var_cols = X.columns[(X == X.iloc[0]).all()]  # faster than `X.columns[X.nunique() <= 1]`
+            self.drop_cols_.extend(col for col in zero_var_cols if col not in set(self.drop_cols_))
+
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        return X[[col for col in X.columns if col not in self.drop_cols_]].copy(deep=False)
+
+
+def make_drop_transformer(**kwargs) -> ColumnDropper:
+    warn("``make_drop_transformer`` is deprecated, please use ``ColumnDropper()`` instead", category=DeprecationWarning)
+    return ColumnDropper(**kwargs)

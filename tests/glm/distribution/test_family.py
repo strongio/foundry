@@ -13,7 +13,7 @@ from foundry.glm.family import Family
 from foundry.glm.glm import SoftmaxKp1
 
 from tests.glm.distribution.util import assert_dist_equal
-from tests.util import assert_tensors_equal
+from tests.conftest import assert_tensors_equal
 
 
 class TestFamily:

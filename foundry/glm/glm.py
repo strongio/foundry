@@ -72,6 +72,8 @@ class Glm(BaseEstimator):
      ``col_mapping={'loc':[col1,col2,col3],'scale':[col1]}``. Finally, instead of the dict-values being lists of
      columns, these can be functions that takes the data and return the relevant columns: e.g.
      ``col_mapping={'loc':sklearn.compose.make_column_selector('^col+.'), 'scale':[col1]}``.
+    :param sparse_mm_threshold: Density threshold for creating a sparse model-matrix. If X has density less than this,
+     the model-matrix will be sparse; otherwise it will be dense. Default .05.
     """
     family_names = {
         'bernoulli': (
@@ -141,11 +143,13 @@ class Glm(BaseEstimator):
     def __init__(self,
                  family: Union[str, Family],
                  penalty: Union[float, Sequence[float], Dict[str, float]] = 0.,
-                 col_mapping: Union[list, dict, None] = None):
+                 col_mapping: Union[list, dict, None] = None,
+                 sparse_mm_threshold: float = .05):
 
         self.family = family
         self.penalty = penalty
         self.col_mapping = col_mapping
+        self.sparse_mm_threshold = sparse_mm_threshold
 
         # set in _init_module:
         self._module_ = None
@@ -196,7 +200,7 @@ class Glm(BaseEstimator):
         :param max_loss: If training stops and loss is higher than this, a class:`foundry.util.FitFailedException` will
          be raised and fitting will be retried with a different set of inits.
         :param verbose: Whether to allow print statements and a progress bar during training. Default True.
-        :param estimate_laplace_coefs: If true, then after fitting, the hessian of the optimzed parameters will be
+        :param estimate_laplace_coefs: If true, then after fitting, the hessian of the optimized parameters will be
          estimated; this can then be used for confidence-intervals and statistical inference (see ``coef_dataframe_``).
          Can set to False if you want to save time and skip this step.
         :return: This ``Glm`` instance.
@@ -384,7 +388,7 @@ class Glm(BaseEstimator):
         out.update(kwargs)  # remaining are passthru
         return out
 
-    def _get_xdict(self, X: ModelMatrix) -> Dict[str, torch.Tensor]:
+    def _get_xdict(self, X: ModelMatrix, sparse_threshold: float) -> Dict[str, torch.Tensor]:
         _to_kwargs = get_to_kwargs(self.module_)
 
         Xdict = self.to_slice_dict_.transform(X)
@@ -392,7 +396,7 @@ class Glm(BaseEstimator):
         # convert to tensors:
         for nm in list(Xdict):
             if is_array(Xdict[nm]):
-                Xdict[nm] = to_tensor(Xdict[nm], **_to_kwargs)
+                Xdict[nm] = to_tensor(Xdict[nm], sparse_threshold=sparse_threshold, **_to_kwargs)
 
             if nm in self.family.params:
                 # model-mat params
@@ -460,7 +464,7 @@ class Glm(BaseEstimator):
         """
         _to_kwargs = get_to_kwargs(self.module_)
 
-        Xdict = self._get_xdict(X)
+        Xdict = self._get_xdict(X, sparse_threshold=self.sparse_mm_threshold)
 
         if not include_y:
             return Xdict, None

@@ -15,7 +15,7 @@ from foundry.glm.family import Family
 from foundry.glm.glm import ModelMatrix, Glm
 from foundry.glm.util import NoWeightModule
 from foundry.util import to_2d, ToSliceDict
-from tests.util import assert_dict_of_tensors_equal, assert_scalars_equal, assert_tensors_equal
+from tests.conftest import assert_dict_of_tensors_equal, assert_scalars_equal
 
 
 @pytest.mark.parametrize(
