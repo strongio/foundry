@@ -2,7 +2,7 @@ from typing import Optional
 
 import torch
 from torch import distributions
-from torch.distributions import transforms
+from torch.distributions import transforms, constraints
 
 
 class SoftmaxKp1:
@@ -27,6 +27,17 @@ class SigmoidTransformForClassification(transforms.SigmoidTransform):
         return y_dim - 1
 
 
+class _MultinomialStrict(constraints.Constraint):
+    is_discrete = True
+    event_dim = 1
+
+    def __init__(self, upper_bound):
+        self.upper_bound = upper_bound
+
+    def check(self, x):
+        return (x >= 0).all(dim=-1) & (x.sum(dim=-1) == self.upper_bound)
+
+
 class Multinomial(distributions.Multinomial):
     def __init__(self,
                  total_count: torch.Tensor,
@@ -47,6 +58,10 @@ class Multinomial(distributions.Multinomial):
             logits=logits,
             validate_args=validate_args
         )
+
+    @constraints.dependent_property(is_discrete=True, event_dim=1)
+    def support(self):
+        return _MultinomialStrict(self.total_count)
 
 
 class NoWeightModule(torch.nn.Module):

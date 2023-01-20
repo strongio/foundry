@@ -211,21 +211,21 @@ class Glm(BaseEstimator):
         probs = self.predict(X=X, type='probs', kwargs_as_is=kwargs_as_is, **kwargs)
         assert len(probs.shape) == 2
 
-        if self.label_encoder_ is not None:
-            # pytorch distributions can vary in behavior: e.g. bernoulli outputs a single prediction for 2-classes,
-            # while categorical/multinomial output a final dim whose extent is equal to the number of classes
-            # so bernoulli breaks sklearn convention and we need to add a 2nd col
-            expected_num_classes = len(self.label_encoder_.classes_)
-            if probs.shape[-1] != expected_num_classes:
-                if expected_num_classes == 2 and probs.shape[-1] == 1:
-                    assert np.all((probs >= 0) & (probs <= 1))
-                    probs = np.concatenate([1 - probs, probs], axis=1)
-                    probs /= probs.sum(axis=1, keepdims=True)
-                else:
+        # pytorch distributions can vary in behavior: e.g. bernoulli outputs a single prediction for 2-classes,
+        # while categorical/multinomial output a final dim whose extent is equal to the number of classes
+        # so bernoulli/binomial breaks sklearn convention and we need to add a 2nd col
+        if probs.shape[-1] == 1:
+            if self.label_encoder_ is not None:
+                expected_num_classes = len(self.label_encoder_.classes_)
+                if expected_num_classes != 2:
                     raise RuntimeError(
                         f"There are {expected_num_classes} ``self.label_encoder_.classes_``, but distribution "
                         f"``probs.shape[-1]`` is {probs.shape[-1]}"
                     )
+            # currently no way to get `expected_num_classes` if label_encoder_ is not present (afaik, only binomial)
+            assert np.all((probs >= 0) & (probs <= 1))
+            probs = np.concatenate([1 - probs, probs], axis=1)
+            probs /= probs.sum(axis=1, keepdims=True)
 
         return probs
 
