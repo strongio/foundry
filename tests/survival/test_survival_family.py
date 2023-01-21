@@ -5,8 +5,6 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 
-from foundry.glm import Glm
-from foundry.glm.family.survival import SurvivalFamily
 from foundry.glm.glm import family_from_string
 
 from tests.conftest import assert_tensors_equal, assert_dict_of_tensors_equal
