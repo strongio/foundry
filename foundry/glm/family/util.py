@@ -2,6 +2,8 @@ import inspect
 from typing import Union, Type
 
 import torch
+from torch.distributions.utils import lazy_property
+
 from foundry.util import ArrayType
 
 
@@ -48,11 +50,15 @@ def subset_distribution(
     # safest:
     if hasattr(dist, '__getitem__'):
         return dist[item]
+    klass = dist.__class__
 
     # approach in torch.distributions.Distribution:
-    param_names = [k for k in _get_dist_pars(dist.__class__) if k in dist.__dict__]
+    param_names = [
+        k for k in _get_dist_pars(klass)
+        if k in dist.__dict__ or not isinstance(getattr(klass, k), lazy_property)
+    ]
     new_kwargs = {par: getattr(dist, par)[item] for par in param_names}
-    new = type(dist)(**new_kwargs)
+    new = klass(**new_kwargs, validate_args=False)
     if '_validate_args' in dist.__dict__:
         new._validate_args = dist._validate_args
 
