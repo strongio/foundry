@@ -6,7 +6,6 @@ import pytest
 import torch
 
 from foundry.glm import Glm
-from foundry.glm.family.survival import SurvivalFamily
 
 from tests.conftest import assert_tensors_equal, assert_dict_of_tensors_equal
 
@@ -37,6 +36,36 @@ def test_log_prob_weights(
     dist.log_prob.assert_called_once()
     assert_tensors_equal(actual_output, expected_output)
 
+# @pytest.mark.parametrize(
+#     argnames=["is_right_censored", "is_left_censored", "expected_output"],
+#     argvalues=[
+#         (torch.tensor([[1., 2., 3.]]).T),
+#         (torch.tensor([[2., 1., 9.]]).T)
+#     ]
+# )
+# @patch('torch.distributions.Exponential.log_prob', autospec=True)
+# def test_log_prob_weights(
+#         mock_exponential_log_prob: Mock,
+#         is_right_censored: torch.Tensor,
+#         is_left_censored: torch.Tensor,
+#         expected_output: torch.Tensor):
+#     fam = SurvivalFamily.from_name('exponential')
+#
+#     mock_exponential_log_prob.return_value = torch.zeros_like()
+#     dist = fam(rate=torch.zeros((3, 1)))
+#     #
+#     actual_output = fam.log_prob(
+#         distribution=dist,
+#         value=value,
+#         is_right_censored=is_right_censored,
+#         is_left_censored=is_left_censored,
+#     )
+#     dist.log_prob.assert_called_once()
+#     assert_tensors_equal(actual_output, expected_output)
+
+
+# todo: _interval_log_prob
+# todo: _truncate_log_probs
 
 
 class TestSurvivalFamilyCensLogProb:
@@ -76,8 +105,8 @@ class TestSurvivalFamilyCensLogProb:
                 expected_input_cdf_upper_tail=torch.tensor([[300.]]),
                 expected_input_cdf_lower_tail=torch.tensor([[2.]]),
                 expected_input_interval_log_prob={
-                    'below': torch.tensor([]).unsqueeze(-1),
-                    'above': torch.tensor([]).unsqueeze(-1)
+                    'lower_bound': torch.tensor([]).unsqueeze(-1),
+                    'upper_bound': torch.tensor([]).unsqueeze(-1)
                 },
                 expected_input_log_prob=torch.tensor([[10.]]),
                 expected_output_log_prob=torch.tensor([10., 2., 300.]).unsqueeze(-1)
@@ -90,8 +119,8 @@ class TestSurvivalFamilyCensLogProb:
                 expected_input_cdf_upper_tail=torch.tensor([300.]).unsqueeze(-1),
                 expected_input_cdf_lower_tail=torch.tensor([]).unsqueeze(-1),
                 expected_input_interval_log_prob={
-                    'below': torch.tensor([2.]).unsqueeze(-1),
-                    'above': torch.tensor([200.]).unsqueeze(-1)
+                    'upper_bound': torch.tensor([2.]).unsqueeze(-1),
+                    'lower_bound': torch.tensor([200.]).unsqueeze(-1)
                 },
                 expected_input_log_prob=torch.tensor([10.]).unsqueeze(-1),
                 expected_output_log_prob=torch.tensor([10., 202., 300.]).unsqueeze(-1)
@@ -104,15 +133,15 @@ class TestSurvivalFamilyCensLogProb:
                 expected_input_cdf_upper_tail=torch.tensor([]).unsqueeze(-1),
                 expected_input_cdf_lower_tail=torch.tensor([]).unsqueeze(-1),
                 expected_input_interval_log_prob={
-                    'below': torch.tensor([]).unsqueeze(-1),
-                    'above': torch.tensor([]).unsqueeze(-1)
+                    'lower_bound': torch.tensor([]).unsqueeze(-1),
+                    'upper_bound': torch.tensor([]).unsqueeze(-1)
                 },
                 expected_input_log_prob=torch.tensor([10., 11., 12.]).unsqueeze(-1),
                 expected_output_log_prob=torch.tensor([10., 11., 12.]).unsqueeze(-1)
             ),
         ]
     )
-    @patch('foundry.glm.family.survival.SurvivalFamily._interval_log_prob', autospec=True)
+    @patch('foundry.survival.survival_family.SurvivalFamily._interval_log_prob', autospec=True)
     @patch('foundry.glm.family.Family.log_cdf', autospec=True)
     @patch('torch.distributions.Weibull.log_prob', autospec=True)
     def setup(self,
@@ -130,7 +159,7 @@ class TestSurvivalFamilyCensLogProb:
 
         mock_weibull_log_prob.side_effect = lambda self, value: value
         mock_log_cdf.side_effect = lambda distribution, value, lower_tail: value
-        mock_interval_log_prob.side_effect = lambda distribution, below, above: below + above
+        mock_interval_log_prob.side_effect = lambda distribution, lower_bound, upper_bound: lower_bound + upper_bound
 
         actual_log_prob = family._get_censored_log_prob(
             distribution=torch_dist,
