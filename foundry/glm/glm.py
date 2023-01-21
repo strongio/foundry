@@ -39,8 +39,7 @@ N_FIT_RETRIES = int(os.getenv('GLM_N_FIT_RETRIES', 10))
 class Glm(BaseEstimator):
     """
     :param family: A family name; you can see available names with ``Glm.family_names``. (Advanced: you can also pass
-     the :class:`foundry.glm.family.Family` instead of a name). Some names can be prefixed with ``survival_`` for
-     support for censored data.
+     the :class:`foundry.glm.family.Family` instead of a name).
     :param penalty: A multiplier for L2 penalty on coefficients. Can be a single value, or a dictionary of these to
      support different penalties per distribution-parameter. Values can either be floats, or can be functions that take
      a ``torch.nn.Module`` as the first argument and that module's param-names as second argument, and returns a scalar
@@ -108,6 +107,13 @@ class Glm(BaseEstimator):
             {
                 'loc': transforms.identity_transform,
                 'covariance_matrix': Covariance()
+            }
+        ),
+        'lognormal': (
+            torch.distributions.LogNormal,
+            {
+                'loc': transforms.identity_transform,
+                'scale': transforms.ExpTransform()
             }
         ),
         'ceiling_weibull': (
@@ -187,7 +193,7 @@ class Glm(BaseEstimator):
          Can set to False if you want to save time and skip this step.
         :return: This ``Glm`` instance.
         """
-        self.family = self._init_family(self.family)
+        self.family = self._init_family(self.family, y=y)
 
         if self.family.supports_predict_proba:
             # sklearn uses `hasattr` in some cases to check for `predict_proba`, so can't just
@@ -231,10 +237,19 @@ class Glm(BaseEstimator):
 
         return probs
 
-    def _init_family(self, family: Union[Family, str]) -> Family:
+    def _init_family(self, family: Union[Family, str], y: Optional[ModelMatrix] = None) -> Family:
         if isinstance(family, str):
+
+            # survival analysis can be indicated in two ways: prefixing family alias with 'survival',
+            # or (preferred) just passing a target that involves censoring
+            is_survival = False
             if family.startswith('survival'):
                 family = family.replace('survival', '').lstrip('_')
+                is_survival = True
+            elif isinstance(y, dict) and any('cens' in k for k in y):
+                is_survival = True
+
+            if is_survival:
                 return SurvivalFamily(*self.family_names[family])
             else:
                 return Family(*self.family_names[family])
