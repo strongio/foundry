@@ -4,7 +4,7 @@ import torch
 from torch.distributions import Weibull, Exponential, constraints
 from torch.distributions.utils import broadcast_all
 
-from ..util import log1mexp
+from foundry.glm.family.util import log1mexp
 
 
 def exp_log_surv(self: Exponential, value: torch.Tensor) -> torch.Tensor:

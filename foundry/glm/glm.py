@@ -22,14 +22,16 @@ from foundry.covariance import Covariance
 from foundry.hessian import hessian
 from foundry.penalty import L2
 
-from .family import Family, CeilingWeibull
-from .family.survival import SurvivalFamily
+from .family import Family
 from .util import NoWeightModule, Stopping, SigmoidTransformForClassification, Multinomial, SoftmaxKp1
 
 from foundry.util import (
     FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d, is_array, ModelMatrix, ToSliceDict, to_1d
 )
 from sklearn.exceptions import NotFittedError
+
+from ..survival.distributions import CeilingWeibull
+from ..survival.survival_family import SurvivalFamily
 
 N_FIT_RETRIES = int(os.getenv('GLM_N_FIT_RETRIES', 10))
 
