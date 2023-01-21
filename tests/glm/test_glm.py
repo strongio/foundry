@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+from sklearn import clone
 
 from sklearn.preprocessing import LabelEncoder
 from torch.distributions import constraints, identity_transform
@@ -14,6 +15,7 @@ from torch.distributions import constraints, identity_transform
 from foundry.glm.family import Family
 from foundry.glm.glm import ModelMatrix, Glm
 from foundry.glm.util import NoWeightModule
+from foundry.survival import make_discrete_target
 from foundry.util import to_2d, ToSliceDict
 from tests.conftest import assert_dict_of_tensors_equal, assert_scalars_equal
 
@@ -85,6 +87,30 @@ def test_predict_proba_but_not_classification_integration(family: str, total_cou
         expected_proba = np.asarray([.375, .25, .375])
         np.testing.assert_allclose(glm.predict(X=X).mean(0), total_count * expected_proba, atol=.001)
     np.testing.assert_allclose(glm.predict_proba(X=X).mean(0), expected_proba, atol=.001)
+
+
+@pytest.mark.parametrize(
+    argnames=['family', 'interval_censoring'],
+    argvalues=[('weibull', False),
+               ('weibull', True),
+               ('lognormal', False),
+               ('lognormal', True),
+               ('normal', False)]
+)
+def test_survival_integration(family: str, interval_censoring: bool):
+    glm = Glm(family=family)
+    times = np.clip([0.44475199, 2.55303933, 0.16739378, 0.22169499, 6.81634875], a_min=0, a_max=5)
+    y = {'value': pd.Series(times), 'is_right_censored': (times == 5)}
+    X = pd.DataFrame(index=y['value'].index)
+
+    if interval_censoring:
+        y['value'] = np.ceil(y['value'])
+        y = make_discrete_target(**y, interval=1)
+
+    glm.fit(X=X, y=y, verbose=False)
+    from foundry.survival.survival_family import SurvivalFamily
+    assert isinstance(glm.family, SurvivalFamily)
+    assert glm.converged_
 
 
 class _FakeDist:
