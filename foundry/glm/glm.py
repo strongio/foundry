@@ -711,7 +711,7 @@ class Glm(BaseEstimator):
                     )
                     self.converged_ = True
                 except ValueError as e:
-                    if 'constraint PositiveDefinite' not in str(e):
+                    if 'constraint PositiveDefinite' not in str(e) and 'covariance_matrix' not in str(e):
                         raise e
                     fail_msg = str(e)
 
