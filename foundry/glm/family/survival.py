@@ -3,9 +3,9 @@ from typing import Optional, Tuple
 import torch
 from torch import distributions
 
-from foundry.util import to_1d, is_invalid, to_2d
+from foundry.util import to_1d, is_invalid, to_2d, log1mexp
 from foundry.glm.family.family import Family
-from foundry.glm.family.util import subset_distribution, log1mexp
+from foundry.glm.family.util import subset_distribution
 
 
 class SurvivalFamily(Family):
