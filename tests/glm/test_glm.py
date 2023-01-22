@@ -108,7 +108,7 @@ def test_survival_integration(family: str, interval_censoring: bool):
         y = make_discrete_target(**y, interval=1)
 
     glm.fit(X=X, y=y, verbose=False)
-    from foundry.survival.survival_family import SurvivalFamily
+    from foundry.glm.family.survival import SurvivalFamily
     assert isinstance(glm.family, SurvivalFamily)
     assert glm.converged_
 

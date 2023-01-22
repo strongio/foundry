@@ -31,7 +31,7 @@ from foundry.util import (
 from sklearn.exceptions import NotFittedError
 
 from ..survival.distributions import CeilingWeibull
-from ..survival.survival_family import SurvivalFamily
+from foundry.glm.family.survival import SurvivalFamily
 
 N_FIT_RETRIES = int(os.getenv('FOUNDRY_N_FIT_RETRIES', 10))
 
