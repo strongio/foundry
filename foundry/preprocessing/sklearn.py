@@ -18,9 +18,18 @@ TransformerLike = Union[Iterable, Callable, TransformerMixin]
 
 class DataFrameTransformer(ColumnTransformer):
     """
-    Like ColumnTransformer, but returns a DataFrame. This is useful if the column-transformer is being used in a
-    pipeline, since there is no other way to pass feature-names to the next step(s). It is also needed to pass
-    categoricals to LGBM.
+    For sklearn <1.2, ``DataFrameTransformer`` is like ``ColumnTransformer`` except it returns a dataframe instead of
+    an ndarray. This is useful for passing feature-names to downstream transformers in a pipeline (e.g.
+    :class:`foundry.preprocessing.InteractionFeatures`), or preserving categorical dtypes for estimators that support
+    these (e.g. LightGBM's).
+
+    For sklearn >1.2, the newer ``set_output`` API means output-type no longer differentiates the two, and the
+    main difference is how the two handle sparsity: ``ColumnTransformer`` does not support transformers with sparse
+    outputs if pandas is the output-type, while ``DataFrameTransformer`` will permit sparse-outputs, encoding each as
+    a ``SparseArray``.
+
+    ``ColumnTransformer``'s lack of support for sparsity is an intentional design-decision -- performance degradation
+    when the number of columns is large (~10k or more) -- so you should choose based on your use-case.
     """
 
     @classmethod
@@ -70,6 +79,11 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
         self.no_selection_handling = self.no_selection_handling.lower()
         assert self.no_selection_handling in {'raise', 'warn', 'ignore'}
 
+        # TODO: change this implementation to be more efficient for dense*onehot.
+        #       for example, imagine modeling a coupon_amount * customer_id interaction for many customers, and
+        #       we've one-hot encoded customer. current implementation would require looping over each customer to
+        #       multiply their sparse indicator by the `coupon_amount` column. more efficient would be selecting all
+        #       customer-indicator columns and multiplying by the `coupon_amount` column in one operation.
         unrolled_interactions = []
         unrolled_interaction_sets = set()
         for int_idx, cols in enumerate(self.interactions):
@@ -167,7 +181,7 @@ def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series) -> Union[Spa
     if old_vals is None:
         return new_vals.copy()
 
-    # because sparse-arrays allow for any fill-value, they don't leverage the fact that
+    # because sparse-arrays allow for any fill-value, they don't leverage the fact that, if fill_value=0,
     # sparse*sparse only needs to capture the intersection of the two; instead, they fill the union.
     old_is_sparse = pd.api.types.is_sparse(old_vals)
     new_is_sparse = pd.api.types.is_sparse(new_vals)
@@ -192,7 +206,7 @@ def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series) -> Union[Spa
 
 class FunctionTransformer(FunctionTransformerBase):
     """
-    Add ``get_feature_names_out()`` to ``FunctionTransformer``
+    Add ``get_feature_names_out()`` to ``FunctionTransformer``, for older versions of sklearn.
     """
     _feature_names_out = None
 
