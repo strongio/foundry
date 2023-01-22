@@ -1,5 +1,4 @@
 import os
-
 from time import sleep
 from typing import Union, Sequence, Optional, Callable, Tuple, Dict
 from warnings import warn
@@ -34,7 +33,7 @@ from sklearn.exceptions import NotFittedError
 from ..survival.distributions import CeilingWeibull
 from ..survival.survival_family import SurvivalFamily
 
-N_FIT_RETRIES = int(os.getenv('GLM_N_FIT_RETRIES', 10))
+N_FIT_RETRIES = int(os.getenv('FOUNDRY_N_FIT_RETRIES', 10))
 
 
 class Glm(BaseEstimator):
@@ -45,7 +44,9 @@ class Glm(BaseEstimator):
     :param penalty: Specify a penalty on coefficients. Can be a single value, or a dictionary of these to support
      different penalties per distribution-parameter. Values can either be floats, which will be interpreted as L2
      penalty magnitudes, or can be functions that take a ``torch.nn.Module`` as the first argument and that module's
-     param-names as second argument, and returns a scalar penalty that will be applied to the log-prob.
+     param-names as second argument, and returns a scalar penalty that will be applied to the log-prob. Finally,
+     ``penalty`` can be a list/tuple of any of the above, in which case ``GridSearchCV`` will be performed to find the
+     best penalty.
     :param col_mapping: Many distributions have multiple parameters: for example the normal distribution has a
      location and scale parameter. If a single dataframe/matrix is passed to  :class:`foundry.glm.Glm.fit`, the default
      behavior is to use this to predict the *first* parameter (e.g. loc) while other parameters (e.g. scale) have no
@@ -279,7 +280,7 @@ class Glm(BaseEstimator):
              callbacks: Sequence[Callable] = (),
              stopping: Union['Stopping', tuple, dict] = (.001,),
              max_iter: int = 200,
-             max_loss: float = np.inf,
+             max_loss: float = float('inf'),
              verbose: bool = True,
              estimate_laplace_coefs: bool = True) -> 'Glm':
 
