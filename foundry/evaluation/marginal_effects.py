@@ -1,4 +1,4 @@
-from typing import Collection, Dict, Optional, Iterable, Tuple
+from typing import Collection, Dict, Iterable, List, Optional, Tuple
 from warnings import warn
 
 import numpy as np
@@ -85,7 +85,18 @@ class MarginalEffects:
             raise TypeError("``self.pipeline[0]`` does not have ``_columns``. Is it a ``ColumnTransformer``?")
         if col_transformer.remainder != 'drop':
             raise NotImplementedError("Not currently implemented if ``col_transformer.remainder != 'drop'``")
-        return list(set(sum(col_transformer._columns, [])))
+
+        # col_transformer.columns_ looks something like [("colA", "colB"), ["colC"]]
+        relevant_features: List[List[str]] = (
+            list(
+                map(
+                    lambda str_or_list: [str_or_list] if isinstance(str_or_list, str) else list(str_or_list),
+                    col_transformer._columns
+                )
+            )
+        )
+        # flatten and drop duplicates
+        return list(set(sum(relevant_features, start=[])))
 
     @property
     def all_column_names_in(self) -> Sequence[str]:
