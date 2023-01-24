@@ -131,7 +131,6 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
             for col in interaction_column_names:
                 new_cols[new_colname] = _sparse_safe_multiply(new_cols[new_colname], X[col].values)
 
-
         df_new_cols = pd.DataFrame(new_cols, index=X.index)
 
         return X.drop(columns=X.columns[X.columns.isin(new_cols)]).join(df_new_cols)
@@ -146,10 +145,11 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
                 continue
             new_col = self.sep.join(interaction_column_names)
             if new_col in feature_names_out:
-                feature_names_out.remove(new_col) # If the column is already in X, we drop it
+                feature_names_out.remove(new_col)  # If the column is already in X, we drop it
             feature_names_out.append(new_col)
 
         return feature_names_out
+
 
 def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series) -> Union[SparseArray, pd.Series]:
     if old_vals is None:
@@ -169,7 +169,7 @@ def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series) -> Union[Spa
         index_intersection = old_vals.sp_index
         assert old_vals.fill_value == 0
     else:
-        old_vals *= new_vals
+        old_vals = old_vals * new_vals
         return old_vals
     product = (
             old_vals[index_intersection.to_int_index().indices] *

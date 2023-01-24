@@ -98,7 +98,6 @@ classifier: Pipeline = make_pipeline(
             )
         ]
     ),
-    as_transformer(lambda df: df.astype('float64')),
     InteractionFeatures(
         [
             (
