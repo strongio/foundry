@@ -124,6 +124,11 @@ class TestInteractionFeatures:
                 id='simple'
             ),
             pytest.param(
+                [('col1', 'col2'), ('col2', 'col1')],
+                [('col1', 'col2')],
+                id='redundant'
+            ),
+            pytest.param(
                 [('col1', 'col50')],
                 RuntimeError,
                 id='not-present',

@@ -71,6 +71,7 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
         assert self.no_selection_handling in {'raise', 'warn', 'ignore'}
 
         unrolled_interactions = []
+        unrolled_interaction_sets = set()
         for int_idx, cols in enumerate(self.interactions):
             any_callables = False
             to_unroll = {}
@@ -108,26 +109,33 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
                         # if callable, no warning needed
                         warn(f"Dropping {interaction} because of duplicates.")
                     continue
-                unrolled_interactions.append(interaction)
+
+                frozen_interaction = frozenset(interaction)
+                if frozen_interaction in unrolled_interaction_sets:
+                    warn(f"{interaction} specified more than once, only keeping the first.")
+                else:
+                    unrolled_interactions.append(interaction)
+                    unrolled_interaction_sets.add(frozen_interaction)
+
         self.unrolled_interactions_ = unrolled_interactions
 
         return self
 
     def transform(self, X: pd.DataFrame, y=None) -> pd.DataFrame:
-        available_cols = set(X.columns)
+        orig_cols = set(X.columns)
 
         new_cols = {}
         for interaction_column_names in self.unrolled_interactions_:
             if len(interaction_column_names) < 2:
                 continue
-            if not set(interaction_column_names).issubset(available_cols):
+            if not set(interaction_column_names).issubset(orig_cols):
                 raise RuntimeError(
-                    f"Columns {interaction_column_names} in `interactions`, but not in columns:\n{available_cols}"
+                    f"Columns {interaction_column_names} in `interactions`, but not in columns:\n{orig_cols}"
                 )
 
             new_colname = self.sep.join(interaction_column_names)
-            if new_colname in X.columns:
-                warn(f"{new_colname} is duplicated.")
+            if new_colname in orig_cols:
+                warn(f"{new_colname} is already in X, overwriting.")
 
             new_cols[new_colname] = None
             for col in interaction_column_names:
@@ -147,7 +155,9 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
                 continue
             new_col = self.sep.join(interaction_column_names)
             if new_col in feature_names_out:
-                feature_names_out.remove(new_col)  # If the column is already in X, we drop it
+                # this follows the behavior above, where interactions are always placed in the same location
+                # regardless of where they were in the original df
+                feature_names_out.remove(new_col)
             feature_names_out.append(new_col)
 
         return feature_names_out
