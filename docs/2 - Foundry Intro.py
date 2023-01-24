@@ -23,7 +23,7 @@ import pandas as pd
 from plotnine import *
 from sklearn.metrics import accuracy_score, r2_score
 from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
-from sklearn.pipeline import make_pipeline
+from sklearn.pipeline import make_pipeline, Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.kernel_approximation import RBFSampler
 from sklearn import svm
@@ -44,19 +44,39 @@ from data.uci import get_online_news_dataset, get_census_dataset
 # +
 X, y = get_census_dataset()
 
-# Cleaning
-X.loc[X["country"] == "Holand-Netherlands", "country"] = '?' # Only one example
-rows_with_missing_values = (X == "?").any(axis=1)
-X, y = X.loc[~rows_with_missing_values, :], y.loc[~rows_with_missing_values]
+categorical_features = ("workclass", "education", "married", "occupation", "relationship", "race", "sex", "country")
 # -
 
-# # Final Model
+# Cleaning
+X.loc[X["country"] == "Holand-Netherlands", "country"] = '?' # Only one example'
+rows_with_missing_values = (X == "?").any(axis=1)
+X, y = X.loc[~rows_with_missing_values, :], y.loc[~rows_with_missing_values]
+X["education"] = pd.Categorical(
+    X["education"], 
+    categories=[
+        'Preschool',
+        '1st-4th',
+        '5th-6th',
+        '7th-8th',
+        '9th',
+        '10th',
+        '11th',
+        '12th',
+        'HS-grad',
+        'Prof-school',
+        'Assoc-voc',
+        'Assoc-acdm',
+        'Some-college',
+        'Bachelors',
+        'Masters',
+        'Doctorate',
+    ], ordered=True)
+X = X.astype({feature: "category" for feature in categorical_features})
+y = y.astype("category")
 
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.linear_model import LogisticRegression
+# # Train a model with feature engineering 
 
-# +
-final_pipeline = make_pipeline(
+classifier: Pipeline = make_pipeline(
     # Newer versions of sklearn, or don't care for pd.Dataframe over np.ndarray?
     # Then you can use sklearn.compose.ColumnTransformer
     DataFrameTransformer(
@@ -64,7 +84,7 @@ final_pipeline = make_pipeline(
             (
                 "onehot", 
                 OneHotEncoder(sparse=False), 
-                ("workclass", "education", "married", "occupation", "relationship", "race", "sex", "country")
+                categorical_features
             ),
             (
                 "log1p",
@@ -89,34 +109,56 @@ final_pipeline = make_pipeline(
     ),
     StandardScaler(),
     Glm("categorical")
-#     DecisionTreeClassifier()
-#     LogisticRegression()
 )
-
-
-
 
 # +
-# X_train, X_test, y_train, y_test = train_test_split(
-#     X, y, test_size=0.10, random_state=97, shuffle=True,
+# results = cross_validate(
+#     final_pipeline, 
+#     X, y, cv=StratifiedKFold(shuffle=True, random_state=100, n_splits=10), 
+#     scoring='accuracy', 
+#     fit_params={"glm__verbose": False, "glm__estimate_laplace_coefs": False,}
 # )
-
-# final_pipeline.fit(
-#     X_train, y_train, 
-#     glm__estimate_laplace_coefs=False
-# )
-# accuracy_score(y_test, final_pipeline.predict(X_test))
+# print(results)
+# print(f"average accuracy: {results['test_score'].mean()}")
 # -
 
-results = cross_validate(
-    final_pipeline, 
-    X, y, cv=StratifiedKFold(shuffle=True, random_state=100, n_splits=10), 
-    scoring='accuracy', 
-    fit_params={"glm__verbose": False, "glm__estimate_laplace_coefs": False,}
-)
-print(results)
-print(f"average accuracy: {results['test_score'].mean()}")
+trained_model = classifier.fit(X, y, glm__estimate_laplace_coefs=False)
 
-trained_model = final_pipeline.fit(X, y, glm__estimate_laplace_coefs=False, glm__verbose=False)
+# ## Evaluation - Marginal Effects
+
+from foundry.evaluation import MarginalEffects
+
+me = MarginalEffects(pipeline=trained_model, )
+me(
+    X, 
+    y.map(lambda item: 1 if item == ">50K" else 0).astype(float), 
+    vary_features = ["sex"], 
+    groupby_features=["occupation"], 
+    marginalize_aggfun=None, 
+    y_aggfun='mean'
+)
+me.plot() + theme(axis_text_x=element_text(rotation=90, hjust=1))
+
+me = MarginalEffects(pipeline=trained_model, )
+me(
+    X, 
+    y.map(lambda item: 1 if item == ">50K" else 0).astype(float), 
+    vary_features = ["education"], 
+    groupby_features=["occupation"], 
+    marginalize_aggfun=None, 
+    y_aggfun='mean'
+)
+me.plot(include_actuals=False) + theme(axis_text_x=element_text(rotation=90, hjust=1)) + ylab("P(Income > 50k)")
+
+me = MarginalEffects(pipeline=trained_model, )
+me(
+    X, 
+    y.map(lambda item: 1 if item == ">50K" else 0).astype(float), 
+    vary_features = ["education_years"], 
+    groupby_features=["occupation"], 
+    marginalize_aggfun=None, 
+    y_aggfun='mean'
+)
+me.plot(include_actuals=True) + theme(axis_text_x=element_text(rotation=90, hjust=1))
 
 
