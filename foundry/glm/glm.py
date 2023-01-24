@@ -718,7 +718,8 @@ class Glm(BaseEstimator):
                 # if `hess` is poorly conditioned, but is positive definite (PD), it may not remain PD after inversion.
                 # Using the Cholesky decomposition helps, but can still cause issues
 
-                # if `hess` is negative definite (ND), the model hasn't converged. Consider looking at the stopping criterion.
+                # if `hess` is negative definite (ND), the model hasn't converged. Consider looking at the stopping
+                # criterion.
 
                 self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
                     means, covariance_matrix=cov, validate_args=True
