@@ -187,7 +187,7 @@ X, y_true = make_classification(
     random_state=97,
 )
 
-binary_model = Glm("categorical").fit(X, y_true)
+binary_model = Glm("bernoulli").fit(X, y_true)
 
 print(f"Accuracy: {accuracy_score(y_true, binary_model.predict(X))}")
 # -
