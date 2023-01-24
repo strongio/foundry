@@ -229,7 +229,8 @@ cross_validate(
     y=y_true,
     scoring='r2',
     cv=KFold(n_splits=5, shuffle=True),
-    fit_params={"glm__estimate_laplace_coefs": False}
+    fit_params={"glm__estimate_laplace_coefs": False, "glm__verbose": False},
+    verbose=1
 )
 # -
 

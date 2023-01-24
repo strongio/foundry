@@ -24,6 +24,9 @@ setuptools.setup(
             'pytest',
             'requests',
             'plotnine',
+        ],
+        'docs' : [
+            'requests'
         ]
     }
 )
