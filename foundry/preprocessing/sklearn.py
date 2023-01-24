@@ -121,7 +121,9 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
             if len(interaction_column_names) < 2:
                 continue
             if not set(interaction_column_names).issubset(available_cols):
-                raise RuntimeError(f"Columns {interaction_column_names} in `interactions`, but not in columns:\n{available_cols}")
+                raise RuntimeError(
+                    f"Columns {interaction_column_names} in `interactions`, but not in columns:\n{available_cols}"
+                )
 
             new_colname = self.sep.join(interaction_column_names)
             if new_colname in X.columns:
@@ -137,7 +139,7 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
 
     def get_feature_names_out(self):
         if self.feature_names_in_ is None:
-            raise NotFittedError(f"This {self.__class__.__name__} is not fitted. Cannot retrieve get_feature_names_out.")
+            raise NotFittedError(f"This {type(self).__name__} is not fitted. Cannot get_feature_names_out.")
 
         feature_names_out = list(self.feature_names_in_)
         for interaction_column_names in self.unrolled_interactions_:
