@@ -27,7 +27,7 @@ from .family.survival import SurvivalFamily
 from .util import NoWeightModule, Stopping, SigmoidTransformForClassification, Multinomial, SoftmaxKp1
 
 from foundry.util import (
-    FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d, is_array, ModelMatrix, ToSliceDict
+    FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d, is_array, ModelMatrix, ToSliceDict, to_1d
 )
 from sklearn.exceptions import NotFittedError
 
@@ -439,7 +439,7 @@ class Glm(BaseEstimator):
 
             # special handling for classification:
             if k == 'value' and self.label_encoder_ is not None:
-                ydict['value'] = self.label_encoder_.transform(ydict['value'])
+                ydict['value'] = self.label_encoder_.transform(to_1d(ydict['value']))
                 ydict['value'] = to_tensor(ydict['value'], **_to_kwargs)
                 continue
 
@@ -500,7 +500,7 @@ class Glm(BaseEstimator):
                     f"y.shape is {y.shape}."
                 )
             self.label_encoder_ = LabelEncoder()
-            self.label_encoder_.fit(y)
+            self.label_encoder_.fit(to_1d(y))
             assert len(self.label_encoder_.classes_) > 1
 
         # create modules that predict params:
@@ -631,7 +631,7 @@ class Glm(BaseEstimator):
             if self.label_encoder_ is not None:
                 probs = self.predict_proba(X, kwargs_as_is=kwargs_as_is, **kwargs)
                 class_idxs = probs.argmax(axis=1)
-                return self.label_encoder_.inverse_transform(class_idxs)
+                return self.label_encoder_.inverse_transform(to_1d(class_idxs))
             else:
                 type = 'mean'
 
