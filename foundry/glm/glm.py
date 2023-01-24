@@ -20,49 +20,19 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from tqdm import tqdm
 
 from foundry.covariance import Covariance
-from foundry.glm.family import Family, CeilingWeibull
-from foundry.glm.family.survival import SurvivalFamily
-from foundry.glm.util import NoWeightModule, Stopping
 from foundry.hessian import hessian
 from foundry.penalty import L2
+
+from .family import Family, CeilingWeibull
+from .family.survival import SurvivalFamily
+from .util import NoWeightModule, Stopping, SigmoidTransformForClassification, Multinomial, SoftmaxKp1
+
 from foundry.util import (
     FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d, is_array, ModelMatrix, ToSliceDict
 )
 from sklearn.exceptions import NotFittedError
 
 N_FIT_RETRIES = int(os.getenv('GLM_N_FIT_RETRIES', 10))
-
-
-class SoftmaxKp1:
-    """
-    Given logits corresponding to the probabilities of K classes, convert to class-probabilities for K+1 classes.
-
-    :param x: A tensor of logits whose final dim indexes the class
-    :return: A tensor of probs with the same shape as the input, except the last dim is one longer.
-    """
-
-    def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        *leading_dims, n_classes = x.shape
-        x_p1 = torch.cat([x, torch.zeros(*leading_dims, 1, dtype=x.dtype, device=x.device)], -1)
-        return torch.softmax(x_p1, -1)
-
-    def get_param_dim(self, y_dim: int) -> int:
-        return y_dim - 1
-
-
-class SigmoidTransformForClassification(transforms.SigmoidTransform):
-    def get_param_dim(self, y_dim: int) -> int:
-        return y_dim - 1
-
-
-class SigmoidTransformForClassification(transforms.SigmoidTransform):
-    def get_param_dim(self, y_dim: int) -> int:
-        return y_dim - 1
-
-
-class SigmoidTransformForClassification(transforms.SigmoidTransform):
-    def get_param_dim(self, y_dim: int) -> int:
-        return y_dim - 1
 
 
 class Glm(BaseEstimator):
@@ -101,7 +71,7 @@ class Glm(BaseEstimator):
             {'probs': SoftmaxKp1()}
         ),
         'multinomial': (
-            distributions.Multinomial,
+            Multinomial,
             {'probs': SoftmaxKp1()}
         ),
         'poisson': (
@@ -243,21 +213,21 @@ class Glm(BaseEstimator):
         probs = self.predict(X=X, type='probs', kwargs_as_is=kwargs_as_is, **kwargs)
         assert len(probs.shape) == 2
 
-        if self.label_encoder_ is not None:
-            # pytorch distributions can vary in behavior: e.g. bernoulli outputs a single prediction for 2-classes,
-            # while categorical/multinomial output a final dim whose extent is equal to the number of classes
-            # so bernoulli breaks sklearn convention and we need to add a 2nd col
-            expected_num_classes = len(self.label_encoder_.classes_)
-            if probs.shape[-1] != expected_num_classes:
-                if expected_num_classes == 2 and probs.shape[-1] == 1:
-                    assert np.all((probs >= 0) & (probs <= 1))
-                    probs = np.concatenate([1 - probs, probs], axis=1)
-                    probs /= probs.sum(axis=1, keepdims=True)
-                else:
+        # pytorch distributions can vary in behavior: e.g. bernoulli outputs a single prediction for 2-classes,
+        # while categorical/multinomial output a final dim whose extent is equal to the number of classes
+        # so bernoulli/binomial breaks sklearn convention and we need to add a 2nd col
+        if probs.shape[-1] == 1:
+            if self.label_encoder_ is not None:
+                expected_num_classes = len(self.label_encoder_.classes_)
+                if expected_num_classes != 2:
                     raise RuntimeError(
                         f"There are {expected_num_classes} ``self.label_encoder_.classes_``, but distribution "
                         f"``probs.shape[-1]`` is {probs.shape[-1]}"
                     )
+            # currently no way to get `expected_num_classes` if label_encoder_ is not present (afaik, only binomial)
+            assert np.all((probs >= 0) & (probs <= 1))
+            probs = np.concatenate([1 - probs, probs], axis=1)
+            probs /= probs.sum(axis=1, keepdims=True)
 
         return probs
 
@@ -377,7 +347,6 @@ class Glm(BaseEstimator):
                 if verbose:
                     print("Estimation laplace coefs interrupted")
 
-
         if estimate_laplace_coefs and verbose:
             if self.converged_:
                 print("Estimating laplace coefs success!")
@@ -395,7 +364,7 @@ class Glm(BaseEstimator):
         Get the penalized log prob, applying weights as needed.
         """
         log_probs = self.family.log_prob(
-            self.family(**self._get_family_kwargs(**x_dict)), # distribution(ilink(X \theta))
+            self.family(**self._get_family_kwargs(**x_dict)),  # distribution(ilink(X \theta))
             **lp_dict
         )
         penalty = self._get_penalty() if include_penalty else 0.
@@ -740,7 +709,7 @@ class Glm(BaseEstimator):
 
             try:
                 # cov = torch.inverse(hess)  # Hello floating point errors my old friend.
-                cholesky_hess = torch.linalg.cholesky(hess) # This is way more numerically stable
+                cholesky_hess = torch.linalg.cholesky(hess)  # This is way more numerically stable
                 inv_cholesky_hess = torch.linalg.inv(cholesky_hess)
                 cov = inv_cholesky_hess.T @ inv_cholesky_hess
 

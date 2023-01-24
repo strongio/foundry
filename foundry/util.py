@@ -17,6 +17,7 @@ def transpose_last_dims(x: torch.Tensor) -> torch.Tensor:
     args[-2], args[-1] = args[-1], args[-2]
     return x.permute(*args)
 
+
 def is_array(x) -> bool:
     """
     Check if an object is an array, by checking if it has an `__array__` method. This is usually to distinguish between
@@ -283,6 +284,8 @@ class ToSliceDict(TransformerMixin, BaseEstimator):
 
 
 def _get_col_names_or_idx(x: Union[pd.DataFrame, np.ndarray]) -> list:
+    if len(x.shape) != 2:
+        raise ValueError(f"Expected 2d array, got shape=`{x.shape}`.")
     if hasattr(x, 'columns'):
         return list(x.columns)
     else:
