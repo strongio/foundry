@@ -96,7 +96,7 @@ class MarginalEffects:
             )
         )
         # flatten and drop duplicates
-        return list(set(sum(relevant_features, start=[])))
+        return list(set(sum(relevant_features, [])))
 
     @property
     def all_column_names_in(self) -> Sequence[str]:

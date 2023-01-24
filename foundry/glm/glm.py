@@ -11,7 +11,6 @@ import torch
 import torch.nn
 from torch import distributions
 from torch.distributions import transforms
-from torch.linalg import LinAlgError
 
 from sklearn.base import BaseEstimator
 from sklearn.preprocessing import LabelEncoder

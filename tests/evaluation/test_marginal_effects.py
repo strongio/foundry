@@ -124,7 +124,7 @@ class TestMarginalEffects:
         ]
     )
     def test_feature_names_in(self, col_transformer__columns, expected):
-        fake_column_transformer = create_autospec(ColumnTransformer, )
+        fake_column_transformer = create_autospec(ColumnTransformer, instance=True)
         fake_column_transformer._columns = col_transformer__columns
         fake_column_transformer.remainder = 'drop'
         fake_pipeline = Pipeline([("preprocessing", fake_column_transformer)])
