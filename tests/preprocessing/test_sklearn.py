@@ -188,6 +188,12 @@ class TestInteractionFeatures:
                 id='pre-existing'
             ),
             pytest.param(
+                [('col1', 'col2')],
+                ['col1', 'col1:col2', 'col2'],
+                ['col1', 'col2', 'col1:col2'],
+                id='pre-existing2'
+            ),
+            pytest.param(
                 [('a', 'b')],
                 pd.DataFrame({'a': SparseArray([1, 1, 0]),
                               'b': SparseArray([1, 0, 1])}),
@@ -241,7 +247,6 @@ class TestInteractionFeatures:
             with pytest.raises(expected):
                 InteractionFeatures.transform(instance, X=X)
 
-
     @pytest.mark.parametrize(
         argnames=['unrolled_interactions', 'x_cols', 'expected'],
         argvalues=[
@@ -269,9 +274,18 @@ class TestInteractionFeatures:
                 ['col1', 'col2', 'col1:col2'],
                 id='pre-existing'
             ),
+            pytest.param(
+                [('col1', 'col2')],
+                ['col1', 'col1:col2', 'col2'],
+                ['col1', 'col2', 'col1:col2'],
+                id='pre-existing2'
+            ),
         ]
     )
-    def test_get_feature_names_out(self, unrolled_interactions: list, x_cols: list, expected: Union[list, Type[Exception]]):
+    def test_get_feature_names_out(self,
+                                   unrolled_interactions: list,
+                                   x_cols: list,
+                                   expected: Union[list, Type[Exception]]):
         instance = create_autospec(InteractionFeatures, instance=True)
         instance.sep = ":"
         instance.unrolled_interactions_ = unrolled_interactions
