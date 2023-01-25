@@ -10,8 +10,6 @@ ArrayType = Union[np.ndarray, torch.Tensor]
 ModelMatrix = Union[np.ndarray, pd.DataFrame, Dict[str, Union[np.ndarray, pd.DataFrame]]]
 
 
-# TODO: unit-tests
-
 def transpose_last_dims(x: torch.Tensor) -> torch.Tensor:
     args = list(range(len(x.shape)))
     args[-2], args[-1] = args[-1], args[-2]
@@ -351,3 +349,17 @@ def to_2d(arr: ArrayType) -> ArrayType:
         if len(arr.shape) == 1:
             arr = arr[..., None]
     return arr
+
+
+def log1mexp(x: torch.Tensor) -> torch.Tensor:
+    """
+    Implement a numerically stable ``log(1 - exp(x))``, as described in
+    https://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf
+    """
+    out_dtype = x.dtype if torch.is_tensor(x) and torch.is_floating_point(x) else torch.get_default_dtype()
+    x = torch.as_tensor(x, dtype=torch.double)
+    out = torch.empty_like(x)
+    mask = -x < 0.693
+    out[mask] = torch.log(-torch.expm1(x[mask]))
+    out[~mask] = torch.log1p(-torch.exp(x[~mask]))
+    return out.to(dtype=out_dtype)

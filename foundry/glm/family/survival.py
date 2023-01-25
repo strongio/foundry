@@ -3,9 +3,9 @@ from typing import Optional, Tuple
 import torch
 from torch import distributions
 
-from foundry.util import to_1d, is_invalid, to_2d
-from ..family import Family
-from ..util import subset_distribution, log1mexp
+from foundry.util import to_1d, is_invalid, to_2d, log1mexp
+from foundry.glm.family.family import Family
+from foundry.glm.family.util import subset_distribution
 
 
 class SurvivalFamily(Family):
@@ -136,7 +136,6 @@ class SurvivalFamily(Family):
         if (_near_zero(trunc_values).sum(1) < 1).any():
             # TODO: this can be supported. pdf(x) / [cdf(upper)-cdf(lower)]
             raise NotImplementedError("Simultaneous left and right truncation not yet supported.")
-
         return log_probs - trunc_values.sum(1, keepdim=True)
 
     @classmethod
@@ -149,8 +148,11 @@ class SurvivalFamily(Family):
         right_censoring = right_censoring.view(*value.shape)
         left_censoring = left_censoring.view(*value.shape)
 
-        # TODO: add to is_*_censored mask if log_cdf is -inf or 0
         is_right_censored = to_1d(~torch.isinf(right_censoring))
+        if not distribution.support.check(0):
+            # if value's lower-bound is 0 on a distribution that does not include zero, that is the same
+            # as no censoring; trying to mark this as right-censored will lead to -inf log-probs
+            is_right_censored &= to_1d(~_near_zero(right_censoring))
         is_left_censored = to_1d(~torch.isinf(left_censoring))
         is_doubly_censored = is_left_censored & is_right_censored
         is_uncens = ~(is_right_censored | is_left_censored)
@@ -173,8 +175,8 @@ class SurvivalFamily(Family):
         # interval/double censored:
         log_probs[is_doubly_censored] = cls._interval_log_prob(
             subset_distribution(distribution, is_doubly_censored),
-            below=left_censoring[is_doubly_censored],
-            above=right_censoring[is_doubly_censored]
+            upper_bound=left_censoring[is_doubly_censored],
+            lower_bound=right_censoring[is_doubly_censored]
         )
 
         # no censoring:
@@ -187,26 +189,35 @@ class SurvivalFamily(Family):
     @classmethod
     def _interval_log_prob(cls,
                            distribution: distributions.Distribution,
-                           below: torch.Tensor,
-                           above: torch.Tensor) -> torch.Tensor:
-        log_cdf1 = cls.log_cdf(distribution, value=below, lower_tail=True)
-        log_cdf2 = cls.log_cdf(distribution, value=above, lower_tail=True)
+                           lower_bound: torch.Tensor,
+                           upper_bound: torch.Tensor) -> torch.Tensor:
+        out = torch.zeros_like(lower_bound)
+        if not lower_bound.numel():
+            return out
 
-        out = torch.zeros_like(below)
+        log_cdf1 = cls.log_cdf(distribution, value=upper_bound, lower_tail=True)
+        log_cdf2 = cls.log_cdf(distribution, value=lower_bound, lower_tail=True)
+        assert not torch.isinf(log_cdf2).any()
 
         # need to avoid evaluating for is_too_close because:
-        # - interval cens prob vanishes, so log_prob is -inf (todo: out=0 isn't right -- better to throw exception?)
-        # - double censored prob approaches 1, but got there via -inf interval_cens, so gradient is nan
+        # 1. interval cens prob vanishes, so log_prob is -inf
+        # 2. double censored prob approaches 1, but got there via -inf interval_cens, so gradient is nan
         is_too_close = torch.isclose(log_cdf2, log_cdf1)
 
-        # below > above means interval censoring:
-        is_interval = (below > above) & ~is_too_close
+        # lower-bound < upper-bound means interval censoring:
+        is_interval = (lower_bound < upper_bound) & ~is_too_close
         # more stable version of log_cdf1.exp() - log_cdf2.exp()
         out[is_interval] = log_cdf1[is_interval] + (1 - (log_cdf2[is_interval] - log_cdf1[is_interval]).exp()).log()
 
-        # above > below means double censored (x is > above *or* x is < below)
-        is_double = (below < above) & ~is_too_close
+        # lower-bound > upper-bound means double censored (x is > lower-bound *or* x is < upper-bound)
+        is_double = (lower_bound > upper_bound) & ~is_too_close
         out[is_double] = log1mexp(log_cdf2[is_double] + (1 - (log_cdf1[is_double] - log_cdf2[is_double]).exp()).log())
+
+        # case (1) above:
+        if (is_too_close & is_interval).any():
+            raise ValueError("Interval-censoring where lower_bound ~= upper_bound")
+        # case (2) above:
+        out[is_too_close & is_double] = 1.
         return out
 
 
