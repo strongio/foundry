@@ -5,8 +5,7 @@ from warnings import warn
 import torch
 from torch import distributions
 
-from .util import log1mexp
-from foundry.util import is_invalid, to_1d, to_2d, to_tensor
+from foundry.util import is_invalid, to_1d, to_2d, log1mexp
 
 
 class Family:
