@@ -8,9 +8,18 @@ from sklearn.compose import ColumnTransformer
 
 class DataFrameTransformer(ColumnTransformer):
     """
-    Like ColumnTransformer, but returns a DataFrame. This is useful if the column-transformer is being used in a
-    pipeline, since there is no other way to pass feature-names to the next step(s). It is also needed to pass
-    categoricals to LGBM.
+    For sklearn <1.2, ``DataFrameTransformer`` is like ``ColumnTransformer`` except it returns a dataframe instead of
+    an ndarray. This is useful for passing feature-names to downstream transformers in a pipeline (e.g.
+    :class:`foundry.preprocessing.InteractionFeatures`), or preserving categorical dtypes for estimators that support
+    these (e.g. LightGBM's).
+
+    For sklearn >1.2, the newer ``set_output`` API means output-type no longer differentiates the two, and the
+    main difference is how the two handle sparsity: ``ColumnTransformer`` does not support transformers with sparse
+    outputs if pandas is the output-type, while ``DataFrameTransformer`` will permit sparse-outputs, encoding each as
+    a ``SparseArray``.
+
+    ``ColumnTransformer``'s lack of support for sparsity is an intentional design-decision -- performance degradation
+    when the number of columns is large (~10k or more) -- so you should choose based on your use-case.
     """
 
     @classmethod

@@ -38,6 +38,11 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
         self.no_selection_handling = self.no_selection_handling.lower()
         assert self.no_selection_handling in {'raise', 'warn', 'ignore'}
 
+        # TODO: change this implementation to be more efficient for dense*onehot.
+        #       for example, imagine modeling a coupon_amount * customer_id interaction for many customers, and
+        #       we've one-hot encoded customer. current implementation would require looping over each customer to
+        #       multiply their sparse indicator by the `coupon_amount` column. more efficient would be selecting all
+        #       customer-indicator columns and multiplying by the `coupon_amount` column in one operation.
         unrolled_interactions = []
         unrolled_interaction_sets = set()
         for int_idx, cols in enumerate(self.interactions):
@@ -135,7 +140,7 @@ def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series) -> Union[Spa
     if old_vals is None:
         return new_vals.copy()
 
-    # because sparse-arrays allow for any fill-value, they don't leverage the fact that
+    # because sparse-arrays allow for any fill-value, they don't leverage the fact that, if fill_value=0,
     # sparse*sparse only needs to capture the intersection of the two; instead, they fill the union.
     old_is_sparse = pd.api.types.is_sparse(old_vals)
     new_is_sparse = pd.api.types.is_sparse(new_vals)
