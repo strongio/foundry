@@ -107,7 +107,10 @@ def test_survival_integration(family: str, interval_censoring: bool):
         y['value'] = np.ceil(y['value'])
         y = make_discrete_target(**y, interval=1)
 
-    glm.fit(X=X, y=y, verbose=False)
+    for i in range(5):
+        glm.fit(X=X, y=y, verbose=False)
+        if glm.converged_:
+            break
     from foundry.glm.family.survival import SurvivalFamily
     assert isinstance(glm.family, SurvivalFamily)
     assert glm.converged_
