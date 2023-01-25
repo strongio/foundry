@@ -6,11 +6,12 @@ import pandas as pd
 import pytest
 from pandas.core.arrays import SparseArray
 from pandas.testing import assert_frame_equal
-from scipy.sparse import spmatrix, coo_matrix
+from scipy.sparse import spmatrix
+from sklearn.compose import make_column_selector
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.exceptions import NotFittedError
 
-from foundry.preprocessing import make_column_selector, InteractionFeatures, DataFrameTransformer, ColumnDropper
+from foundry.preprocessing import InteractionFeatures, DataFrameTransformer, ColumnDropper
 
 
 def make_small_df():
@@ -76,14 +77,6 @@ def test_column_dropper(kwargs: dict,
     else:
         with pytest.raises(expected):
             my_drop_transformer.fit(small_df)
-
-
-def test_make_column_selector():
-    small_df = make_small_df()
-    column_selector = make_column_selector("[AB]")
-
-    assert column_selector(small_df) == ["A", "B"]
-    assert "[AB]" in repr(column_selector)
 
 
 class TestDataFrameTransformer:
