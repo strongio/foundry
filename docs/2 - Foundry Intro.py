@@ -83,17 +83,17 @@ classifier: Pipeline = make_pipeline(
         transformers=[
             (
                 "onehot", 
-                OneHotEncoder(sparse=False), 
+                OneHotEncoder(), 
                 categorical_features
             ),
             (
                 "log1p",
-                as_transformer(np.log1p),
+                make_pipeline(as_transformer(np.log1p), StandardScaler()),
                 make_column_selector("capital")
             ),
             (
-                "pass",
-                as_transformer(identity),
+                "scale",
+                StandardScaler(),
                 ("age", "education_years", "capitalgain", "capitalloss", "hoursperweek")
             )
         ]
@@ -101,12 +101,11 @@ classifier: Pipeline = make_pipeline(
     InteractionFeatures(
         [
             (
-                make_column_selector("pass"), 
+                make_column_selector("scale"), 
                 make_column_selector("onehot")
             )
         ]
     ),
-    StandardScaler(),
     Glm("categorical")
 )
 
