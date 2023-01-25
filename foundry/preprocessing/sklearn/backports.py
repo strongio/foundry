@@ -50,4 +50,6 @@ class SimpleImputer(SimpleImputerBase):
         names = input_features[~np.isnan(self.statistics_)]
         if not self.add_indicator:
             return names
-        return np.concatenate([names, names[self.indicator_.features_]])
+        prefix = type(self.indicator_).__name__.lower()
+        indicator_names = np.asarray([f"{prefix}_{nm}" for nm in names[self.indicator_.features_]])
+        return np.concatenate([names, indicator_names])

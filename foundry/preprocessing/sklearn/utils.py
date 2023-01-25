@@ -1,5 +1,4 @@
 from sklearn.base import TransformerMixin
-from sklearn.compose import make_column_selector as make_column_selector_base
 from sklearn.pipeline import make_pipeline
 
 from .backports import FunctionTransformer
@@ -26,10 +25,3 @@ def as_transformer(x) -> TransformerMixin:
         return FunctionTransformer(x)
     else:
         raise TypeError(f"{type(x).__name__} does not have a `transform()` method.")
-
-
-class make_column_selector(make_column_selector_base):
-    def __repr__(self):
-        return f"make_column_selector(pattern={self.pattern}, " \
-               f"dtype_include={self.dtype_include}, " \
-               f"dtype_exclude={self.dtype_exclude})"

@@ -2,8 +2,7 @@ from typing import Optional, Collection
 from warnings import warn
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
-
-from .backports import make_column_selector
+from sklearn.compose import make_column_selector
 
 
 class ColumnDropper(TransformerMixin, BaseEstimator):
