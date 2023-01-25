@@ -730,9 +730,8 @@ class Glm(BaseEstimator):
         self.converged_ = False
         with torch.inference_mode():
             try:
-                cholesky_hess = torch.linalg.cholesky(hess)
                 self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
-                    means, scale_tril=torch.linalg.inv(cholesky_hess), validate_args=True
+                    means, precision_matrix=hess, validate_args=True
                 )
                 self.converged_ = True
             except (RuntimeError, ValueError) as e:
