@@ -12,7 +12,7 @@ from sklearn.preprocessing import LabelEncoder
 from torch.distributions import constraints, identity_transform
 
 from foundry.glm.family import Family
-from foundry.glm.glm import ModelMatrix, Glm
+from foundry.glm.glm import ModelMatrix, Glm, family_from_string
 from foundry.glm.util import NoWeightModule
 from foundry.util import to_2d, ToSliceDict
 from tests.conftest import assert_dict_of_tensors_equal, assert_scalars_equal
@@ -129,7 +129,7 @@ class TestClassifierPredict:
         """
         method should only exist in instances if their distribution has 'probs'
         """
-        family = Glm._init_family(Glm, family_nm)
+        family = family_from_string(family_nm)
         glm = Glm(family=family)
         glm._fit = Mock(glm._fit, autospec=True)
         glm.fit(X=None, y=None)

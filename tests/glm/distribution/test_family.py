@@ -10,6 +10,7 @@ import torch.distributions
 
 from foundry.glm import Glm
 from foundry.glm.family import Family
+from foundry.glm.glm import family_from_string
 from foundry.glm.util import SoftmaxKp1
 
 from tests.glm.distribution.util import assert_dist_equal
@@ -79,7 +80,7 @@ class TestFamily:
         ])
     def setup(self, request):
         return self.Fixture(
-            family=Glm._init_family(Glm, request.param.alias),
+            family=family_from_string(request.param.alias),
             call_input=request.param.call_input,
             expected_call_output=request.param.expected_call_output,
             expected_has_total_count=request.param.expected_has_total_count,

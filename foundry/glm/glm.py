@@ -233,11 +233,7 @@ class Glm(BaseEstimator):
     def _init_family(self, family: Union[Family, str]) -> Family:
         """ if family is a string, turns family to a Family. else return unchanged. """
         if isinstance(family, str):
-            if family.startswith('survival'):
-                family = family.replace('survival', '').lstrip('_')
-                return SurvivalFamily(*self.family_names[family])
-            else:
-                return Family(*self.family_names[family])
+            family = family_from_string(family)
         return family
 
     @retry(retry=retry_if_exception_type(FitFailedException), reraise=True, stop=stop_after_attempt(N_FIT_RETRIES + 1))
@@ -753,3 +749,11 @@ class Glm(BaseEstimator):
         hess = hessian(output=-log_prob.squeeze(), inputs=all_params, allow_unused=True, progress=False)
 
         return all_param_names, means, hess
+
+
+def family_from_string(family: str) -> Family:
+    if family.startswith('survival'):
+        family = family.replace('survival', '').lstrip('_')
+        return SurvivalFamily(*Glm.family_names[family])
+    else:
+        return Family(*Glm.family_names[family])
