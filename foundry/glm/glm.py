@@ -135,12 +135,14 @@ class Glm(BaseEstimator):
                  family: Union[str, Family],
                  penalty: Union[float, Sequence[float], Dict[str, float]] = 0.,
                  col_mapping: Union[list, dict, None] = None,
-                 sparse_mm_threshold: float = .05):
+                 sparse_mm_threshold: float = .05,
+                 _warm_start: Optional[dict] = None):
 
         self.family = family
         self.penalty = penalty
         self.col_mapping = col_mapping
         self.sparse_mm_threshold = sparse_mm_threshold
+        self._warm_start = _warm_start
 
         # set in _init_module:
         self._module_ = None
@@ -533,6 +535,12 @@ class Glm(BaseEstimator):
                 module, nms = self.module_factory(X=Xp, output_dim=module_num_outputs)
             self.module_[dp] = module
             self._module_param_names_[dp] = {k: np.asarray(v) for k, v in nms.items()}
+
+        if self._warm_start is not None:
+            try:
+                self.module_.load_state_dict(self._warm_start)
+            except Exception as e:  # TODO
+                warn(f"Unable to load warm start: {str(e)}")
 
     def _init_col_mapping(self, X: ModelMatrix):
         col_mapping = self.col_mapping
