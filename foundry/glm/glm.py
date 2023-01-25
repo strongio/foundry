@@ -456,7 +456,7 @@ class Glm(BaseEstimator):
 
             # special handling for classification:
             if k == 'value' and self.label_encoder_ is not None:
-                ydict['value'] = self.label_encoder_.transform(to_2d(ydict['value']))
+                ydict['value'] = self.label_encoder_.transform(to_1d(ydict['value']))
                 ydict['value'] = to_tensor(ydict['value'], **_to_kwargs)
                 continue
 
