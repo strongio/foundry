@@ -1,43 +1,11 @@
 import itertools
-from typing import Callable, Iterable, Optional, Sequence, Tuple, Union, Collection
+from typing import Union, Sequence, Tuple, Callable
 from warnings import warn
 
-import numpy as np
 import pandas as pd
 from pandas.core.arrays import SparseArray
-from scipy import sparse
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.compose import ColumnTransformer
-from sklearn.compose import make_column_selector as make_column_selector_sklearn
+from sklearn.base import TransformerMixin, BaseEstimator
 from sklearn.exceptions import NotFittedError
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import FunctionTransformer as FunctionTransformerBase
-
-TransformerLike = Union[Iterable, Callable, TransformerMixin]
-
-
-class DataFrameTransformer(ColumnTransformer):
-    """
-    Like ColumnTransformer, but returns a DataFrame. This is useful if the column-transformer is being used in a
-    pipeline, since there is no other way to pass feature-names to the next step(s). It is also needed to pass
-    categoricals to LGBM.
-    """
-
-    @classmethod
-    def _convert_single_transform_to_df(cls, X) -> pd.DataFrame:
-        if sparse.issparse(X):
-            return pd.DataFrame.sparse.from_spmatrix(X)
-        if isinstance(X, pd.DataFrame):
-            X.reset_index(drop=True, inplace=True)
-        else:
-            X = pd.DataFrame(X)
-        return X
-
-    def _hstack(self, Xs: Sequence[Union[pd.DataFrame, np.ndarray]]) -> pd.DataFrame:
-        Xs = [self._convert_single_transform_to_df(X) for X in Xs]
-        out = pd.concat(Xs, axis=1)
-        out.columns = self.get_feature_names_out()
-        return out
 
 
 class InteractionFeatures(TransformerMixin, BaseEstimator):
@@ -70,6 +38,11 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
         self.no_selection_handling = self.no_selection_handling.lower()
         assert self.no_selection_handling in {'raise', 'warn', 'ignore'}
 
+        # TODO: change this implementation to be more efficient for dense*onehot.
+        #       for example, imagine modeling a coupon_amount * customer_id interaction for many customers, and
+        #       we've one-hot encoded customer. current implementation would require looping over each customer to
+        #       multiply their sparse indicator by the `coupon_amount` column. more efficient would be selecting all
+        #       customer-indicator columns and multiplying by the `coupon_amount` column in one operation.
         unrolled_interactions = []
         unrolled_interaction_sets = set()
         for int_idx, cols in enumerate(self.interactions):
@@ -167,7 +140,7 @@ def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series) -> Union[Spa
     if old_vals is None:
         return new_vals.copy()
 
-    # because sparse-arrays allow for any fill-value, they don't leverage the fact that
+    # because sparse-arrays allow for any fill-value, they don't leverage the fact that, if fill_value=0,
     # sparse*sparse only needs to capture the intersection of the two; instead, they fill the union.
     old_is_sparse = pd.api.types.is_sparse(old_vals)
     new_is_sparse = pd.api.types.is_sparse(new_vals)
@@ -188,106 +161,3 @@ def _sparse_safe_multiply(old_vals: pd.Series, new_vals: pd.Series) -> Union[Spa
             new_vals[index_intersection.to_int_index().indices]
     )
     return SparseArray(data=product, sparse_index=index_intersection, fill_value=0.)
-
-
-class FunctionTransformer(FunctionTransformerBase):
-    """
-    Add ``get_feature_names_out()`` to ``FunctionTransformer``
-    """
-    _feature_names_out = None
-
-    def fit(self, X, y=None) -> 'FunctionTransformer':
-        super().fit(X=X, y=y)
-        maybe_df = self.transform(X)
-        if hasattr(maybe_df, 'columns'):
-            self._feature_names_out = list(maybe_df.columns)
-        else:
-            if len(maybe_df.shape) == 1:
-                # this will always (?) error out later but that error message is more understandable
-                self._feature_names_out = ['x0']
-            else:
-                assert len(maybe_df.shape) == 2
-                self._feature_names_out = [f'x{i}' for i in range(maybe_df.shape[1])]
-        return self
-
-    def get_feature_names_out(self, feature_names_in) -> Sequence[str]:
-        if len(feature_names_in) == len(self._feature_names_out):
-            return np.asarray([
-                x if x == y else f'{x}_{y}' for x, y in zip(feature_names_in, self._feature_names_out)
-            ], dtype='object')
-        elif len(feature_names_in) == 1:
-            if len(self._feature_names_out) == 1 and feature_names_in[0] == self._feature_names_out[0]:
-                return np.asarray([f'{feature_names_in[0]}'], dtype='object')
-            return np.asarray([f'{feature_names_in[0]}_{y}' for y in self._feature_names_out], dtype='object')
-        else:
-            return np.asarray(self._feature_names_out)
-
-
-def identity(x):
-    return x
-
-
-def as_transformer(x: TransformerLike) -> TransformerMixin:
-    """
-    Standardize a transformer, function, or list of these into a transformer. Lists are converted to sklearn.pipelines.
-    """
-    if x is None:
-        return as_transformer(identity)
-    if hasattr(x, '__iter__') and not isinstance(x, str):
-        return make_pipeline(*[as_transformer(xi) for xi in x])
-    if hasattr(x, 'transform'):
-        return x
-    elif callable(x):
-        return FunctionTransformer(x)
-    else:
-        raise TypeError(f"{type(x).__name__} does not have a `transform()` method.")
-
-
-class make_column_selector(make_column_selector_sklearn):
-    def __repr__(self):
-        return f"make_column_selector(pattern={self.pattern}, dtype_include={self.dtype_include}, dtype_exclude={self.dtype_exclude})"
-
-
-class ColumnDropper(TransformerMixin, BaseEstimator):
-    """
-    Drop columns based on a name, pattern, and/or zero-variance
-    """
-
-    def __init__(self,
-                 names: Collection[str] = (),
-                 pattern: Optional[str] = None,
-                 drop_zero_var: bool = True
-                 ):
-        self.names = names
-        self.pattern = pattern
-        self.drop_zero_var = drop_zero_var
-        self.drop_cols_ = None
-
-    def fit(self, X: pd.DataFrame, y=None) -> 'ColumnDropper':
-        if self.names and self.pattern:
-            raise ValueError("Both names and regex defined. Only one may be defined.")
-        elif self.pattern:
-            self.drop_cols_ = make_column_selector(pattern=self.pattern)(X)
-            if not self.drop_cols_:
-                warn(f"pattern `{self.pattern}` returned no columns.")
-        else:
-            # avoid weirdness if they passed a string or generator:
-            self.names = [self.names] if isinstance(self.names, str) else list(self.names)
-            unmatched = set(self.names) - set(X.columns)
-            if unmatched:
-                raise RuntimeError(f"Some `names` not in X: {unmatched}")
-            self.drop_cols_ = list(self.names)
-
-        if self.drop_zero_var:
-            zero_var_cols = X.columns[(X == X.iloc[0]).all()]  # faster than `X.columns[X.nunique() <= 1]`
-            self.drop_cols_.extend(col for col in zero_var_cols if col not in set(self.drop_cols_))
-
-        return self
-
-    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        return X[[col for col in X.columns if col not in self.drop_cols_]].copy(deep=False)
-
-
-def make_drop_transformer(**kwargs) -> ColumnDropper:
-    warn("``make_drop_transformer`` is deprecated, please use ``ColumnDropper()`` instead", category=DeprecationWarning)
-    return ColumnDropper(**kwargs)

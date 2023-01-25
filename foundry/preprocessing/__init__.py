@@ -1,10 +1,9 @@
 from .sklearn import (
     DataFrameTransformer,
     InteractionFeatures,
-    as_transformer,
-    identity,
-    make_column_selector,
     ColumnDropper,
-    make_drop_transformer
+    FunctionTransformer,
+    SimpleImputer
 )
+from .categorical import ToCategorical
 from .dates import FourierFeatures

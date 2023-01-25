@@ -1,18 +1,26 @@
-from typing import Union
+from typing import Union, Optional
 
 import numpy as np
 import pandas as pd
 from sklearn.base import TransformerMixin, BaseEstimator
 from sklearn.utils.validation import _check_feature_names_in
 
+from foundry.util import to_1d
+
 
 class FourierFeatures(TransformerMixin, BaseEstimator):
     feature_names_in_ = None
 
-    def __init__(self, K: int, period: Union[int, np.timedelta64, str], output_dataframe: bool = True):
+    def __init__(self, K: int, period: Union[int, np.timedelta64, str]):
         self.K = K
         self.period = period
-        self.output_dataframe = output_dataframe
+        self._output_dataframe = False
+
+    def set_output(self, transform: Optional[str] = None):
+        try:
+            return super().set_output(transform=transform)
+        except AttributeError:
+            self._output_dataframe = (transform == 'pandas')
 
     def fit(self, X, y=None) -> 'FourierFeatures':
         if isinstance(self.period, str):
@@ -47,9 +55,8 @@ class FourierFeatures(TransformerMixin, BaseEstimator):
     def transform(self, X, y=None) -> pd.DataFrame:
         if isinstance(X, pd.DataFrame):
             X = X.values
-        out = [self._transform_datetimes(X[:, i]) for i in range(X.shape[1])]
-        out = np.hstack(out)
-        if self.output_dataframe:
+        out = np.stack([self._transform_datetimes(X[:, i]) for i in range(X.shape[1])], 1)
+        if self._output_dataframe:
             out = pd.DataFrame(out, columns=self.get_feature_names_out(None))
         return out
 
@@ -62,7 +69,7 @@ class FourierFeatures(TransformerMixin, BaseEstimator):
                 yield k, col_idx, colname
 
     def _transform_datetimes(self, datetimes: np.ndarray) -> np.ndarray:
-        datetimes = np.asanyarray(datetimes)
+        datetimes = to_1d(np.asanyarray(datetimes))
         if isinstance(self.period, int):
             if not datetimes.dtype.name.startswith('int'):
                 raise ValueError("`period` is an int, but the values passed are not type int")
