@@ -87,18 +87,13 @@ class MarginalEffects:
             raise TypeError("``self.pipeline[0]`` does not have ``_columns``. Is it a ``ColumnTransformer``?")
         if col_transformer.remainder != 'drop':
             raise NotImplementedError("Not currently implemented if ``col_transformer.remainder != 'drop'``")
-
-        # col_transformer.columns_ looks something like [("colA", "colB"), ["colC"]]
-        relevant_features: List[List[str]] = (
-            list(
-                map(
-                    lambda str_or_list: [str_or_list] if isinstance(str_or_list, str) else list(str_or_list),
-                    col_transformer._columns
-                )
-            )
-        )
-        # flatten and drop duplicates
-        return list(set(sum(relevant_features, [])))
+        feature_names_in = set()
+        for cols in col_transformer._columns:
+            if isinstance(cols, str):
+                cols = [cols]
+            for col in cols:
+                feature_names_in.add(col)
+        return list(feature_names_in)
 
     @property
     def all_column_names_in(self) -> Sequence[str]:
