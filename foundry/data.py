@@ -1,8 +1,8 @@
 from typing import Optional, Sequence
 
+import numpy as np
 import torch
 from sklearn.datasets import make_regression
-import pandas as pd
 from foundry.glm.glm import family_from_string
 
 
@@ -32,6 +32,8 @@ def simulate_data(family: str,
 
     # default all informative features:
     kwargs['n_informative'] = kwargs.get('n_informative', n_features)
+    # sklearn multiplies by 100, we reverse that, but want bias to be 1-1
+    kwargs['bias'] = kwargs.get('bias', 0.0) * 100
 
     # simulate:
     X, y, ground_truth_mat = make_regression(
@@ -57,8 +59,14 @@ def simulate_data(family: str,
     feature_names = [f'x{i + 1}' for i in range(n_features)]
     out = pd.DataFrame(X, columns=feature_names)
 
-    # sample from distribution for target:
-    out['target'] = distribution.sample().numpy()
+    # set torch random-state:
+    random_state = kwargs.get('random_state')
+    with torch.random.fork_rng():
+        if random_state is not None:
+            torch.manual_seed(random_state if isinstance(random_state, int) else hash(random_state))
+
+        # sample from distribution for target:
+        out['target'] = distribution.sample().numpy()
 
     # ground truth:
     ground_truth = {p: {} for p in predict_params}
