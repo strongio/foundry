@@ -1,47 +1,100 @@
 import math
 import warnings
 from collections import namedtuple
+from dataclasses import dataclass
 from typing import Type, Optional, Collection
 from unittest.mock import Mock, patch, MagicMock
 
 import pytest
 import torch.distributions
 
+from foundry.glm import Glm
 from foundry.glm.family import Family
+from foundry.glm.util import SoftmaxKp1
 
 from tests.glm.distribution.util import assert_dist_equal
-from tests.util import assert_tensors_equal
+from tests.conftest import assert_tensors_equal
 
 
-@pytest.mark.parametrize(
-    ids=lambda *args: args[0],
-    argnames=['alias', 'call_input', 'expected_call_output'],
-    argvalues=[
-        (
-                'binomial',
-                {'probs': torch.tensor([0., 1.]).unsqueeze(-1)},
-                torch.distributions.Binomial(probs=torch.tensor([.5, 0.7311]).unsqueeze(-1)),
-        ),
-        (
-                'weibull',
-                {
+class TestFamily:
+    @dataclass
+    class Params:
+        alias: str
+        call_input: dict
+        expected_supports_predict_proba: bool
+        expected_has_total_count: bool
+        expected_call_output: torch.distributions.Distribution
+
+    @dataclass
+    class Fixture:
+        family: Family
+        call_input: dict
+        expected_supports_predict_proba: bool
+        expected_has_total_count: bool
+        expected_call_output: torch.distributions.Distribution
+
+    @pytest.fixture(
+        ids=lambda x: x.alias,
+        params=[
+            Params(
+                alias='bernoulli',
+                call_input={'probs': torch.tensor([0., 1.]).unsqueeze(-1)},
+                expected_supports_predict_proba=True,
+                expected_has_total_count=False,
+                expected_call_output=torch.distributions.Bernoulli(probs=torch.tensor([.5, 0.7311]).unsqueeze(-1)),
+            ),
+            Params(
+                alias='binomial',
+                call_input={'probs': torch.tensor([0., 1.]).unsqueeze(-1)},
+                expected_supports_predict_proba=True,
+                expected_has_total_count=True,
+                expected_call_output=torch.distributions.Binomial(probs=torch.tensor([.5, 0.7311]).unsqueeze(-1)),
+            ),
+            Params(
+                alias='negative_binomial',
+                call_input={
+                    'probs': torch.tensor([0., 1.]).unsqueeze(-1),
+                    'total_count': torch.tensor([0., 1.]).unsqueeze(-1)
+                },
+                expected_supports_predict_proba=False,
+                expected_has_total_count=True,
+                expected_call_output=torch.distributions.NegativeBinomial(
+                    probs=torch.tensor([.5, 0.7311]).unsqueeze(-1),
+                    total_count=torch.tensor([1., math.e]).unsqueeze(-1)
+                ),
+            ),
+            Params(
+                alias='weibull',
+                call_input={
                     'scale': torch.tensor([0., 1.]).unsqueeze(-1),
                     'concentration': torch.tensor([0., 0.]).unsqueeze(-1)
                 },
-                torch.distributions.Weibull(
+                expected_supports_predict_proba=False,
+                expected_has_total_count=False,
+                expected_call_output=torch.distributions.Weibull(
                     scale=torch.tensor([1., math.exp(1.)]).unsqueeze(-1),
                     concentration=torch.ones(2).unsqueeze(-1)
                 ),
-        ),
-    ]
-)
-def test_family_call(alias: str, call_input: dict, expected_call_output: torch.distributions.Distribution):
-    """
-    Calling a family instance w/tensors passes the tensors thru ilinks and creates a torch distribution
-    """
-    family = Family.from_name(name=alias)
-    call_output = family(**call_input)
-    assert_dist_equal(call_output, expected_call_output)
+            ),
+        ])
+    def setup(self, request):
+        return self.Fixture(
+            family=Glm._init_family(Glm, request.param.alias),
+            call_input=request.param.call_input,
+            expected_call_output=request.param.expected_call_output,
+            expected_has_total_count=request.param.expected_has_total_count,
+            expected_supports_predict_proba=request.param.expected_supports_predict_proba
+        )
+
+    def test_has_total_count(self, setup: Fixture):
+        assert setup.family.has_total_count == setup.expected_has_total_count
+
+    def test_supports_predict_proba(self, setup: Fixture):
+        assert setup.family.supports_predict_proba == setup.expected_supports_predict_proba
+
+    def test_call_output(self, setup: Fixture):
+        call_output = setup.family(**setup.call_input)
+        assert_dist_equal(call_output, setup.expected_call_output)
 
 
 class TestFamilyLogCdf:
@@ -164,11 +217,27 @@ def test__validate_values(input: tuple,
                           expected_output: tuple,
                           expected_exception: Optional[Type[Exception]]):
     torch_distribution = Mock()
+    # todo: parameterize these:
     torch_distribution.batch_shape = (3, 1)
+    torch_distribution.event_shape = ()
+    family = Family(torch_distribution, params_and_links={'probs' : lambda x: x})
     if expected_exception:
         with pytest.raises(expected_exception):
-            Family._validate_values(*input, distribution=torch_distribution)
+            family._validate_values(*input, distribution=torch_distribution)
     else:
-        value, weights = Family._validate_values(*input, distribution=torch_distribution)
+        value, weights = family._validate_values(*input, distribution=torch_distribution)
         assert_tensors_equal(value, expected_output[0])
         assert_tensors_equal(weights, expected_output[1])
+
+
+@pytest.mark.parametrize(
+    argnames=["input", "expected_output"],
+    argvalues=[
+        (torch.tensor([0., 0.]), torch.tensor([.3333, .3333, 0.3333])),
+        (torch.tensor([0.]), torch.tensor([.5, .5])),
+        (torch.tensor([1.]), torch.tensor([.7311, .2689])),
+    ]
+)
+def test_softmax_kp1(input: torch.Tensor, expected_output: torch.Tensor):
+    _softmax_kp1 = SoftmaxKp1()
+    assert_tensors_equal(_softmax_kp1(input), expected_output, tol=.0001)

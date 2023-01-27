@@ -4,6 +4,7 @@ from .sklearn import (
     as_transformer,
     identity,
     make_column_selector,
-    make_drop_transformer,
+    ColumnDropper,
+    make_drop_transformer
 )
 from .dates import FourierFeatures

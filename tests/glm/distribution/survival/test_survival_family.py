@@ -5,9 +5,10 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 
+from foundry.glm import Glm
 from foundry.glm.family.survival import SurvivalFamily
 
-from tests.util import assert_tensors_equal, assert_dict_of_tensors_equal
+from tests.conftest import assert_tensors_equal, assert_dict_of_tensors_equal
 
 
 @pytest.mark.parametrize(
@@ -23,7 +24,7 @@ def test_log_prob_weights(
         dist_log_prob: torch.Tensor,
         weight: torch.Tensor,
         expected_output: torch.Tensor):
-    fam = SurvivalFamily.from_name('exponential')
+    fam = Glm._init_family(Glm, 'survival_exponential')
     mock_exponential_log_prob.return_value = dist_log_prob
     dist = fam(rate=torch.zeros((3, 1)))
     value = torch.tensor([1., 1., .5]).unsqueeze(-1)
@@ -121,7 +122,7 @@ class TestSurvivalFamilyCensLogProb:
               request) -> Fixture:
         params: TestSurvivalFamilyCensLogProb.Params = request.param
 
-        family = SurvivalFamily.from_name('weibull')
+        family = Glm._init_family(Glm, 'survival_weibull')
         torch_dist = family(
             scale=torch.zeros_like(params.value),
             concentration=torch.zeros_like(params.value)

@@ -8,7 +8,7 @@ from torch.distributions import Binomial, Distribution, Weibull, ContinuousBerno
 
 from foundry.glm.family.util import subset_distribution, log1mexp
 from tests.glm.distribution.util import assert_dist_equal
-from tests.util import assert_scalars_equal
+from tests.conftest import assert_scalars_equal
 
 
 @pytest.mark.parametrize(

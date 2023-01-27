@@ -2,24 +2,13 @@ from typing import Optional, Tuple
 
 import torch
 from torch import distributions
-from torch.distributions import transforms
 
 from foundry.util import to_1d, is_invalid, to_2d
-from .distributions import CeilingWeibull
 from ..family import Family
 from ..util import subset_distribution, log1mexp
 
 
 class SurvivalFamily(Family):
-    aliases = Family.aliases.copy()
-    aliases['ceiling_weibull'] = (
-        CeilingWeibull,
-        {
-            'scale': transforms.ExpTransform(),
-            'concentration': transforms.ExpTransform(),
-            'ceiling': transforms.SigmoidTransform()
-        }
-    )
 
     def log_prob(self,
                  distribution: distributions.Distribution,
@@ -108,8 +97,7 @@ class SurvivalFamily(Family):
         # invalid values permitted for censored observations
         pass
 
-    @classmethod
-    def _validate_values(cls,
+    def _validate_values(self,
                          value: torch.Tensor,
                          weight: Optional[torch.Tensor],
                          distribution: distributions.Distribution) -> Tuple[torch.Tensor, torch.Tensor]:

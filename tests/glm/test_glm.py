@@ -1,20 +1,90 @@
 from collections import namedtuple
 from dataclasses import dataclass
 from typing import Optional, Dict, Sequence, Type
-from unittest.mock import Mock, PropertyMock, patch
+from unittest.mock import Mock, create_autospec
 
 import numpy as np
 import pandas as pd
 import pytest
 import torch
-from sklearn.exceptions import NotFittedError
+
+from sklearn.preprocessing import LabelEncoder
 from torch.distributions import constraints, identity_transform
 
 from foundry.glm.family import Family
 from foundry.glm.glm import ModelMatrix, Glm
 from foundry.glm.util import NoWeightModule
 from foundry.util import to_2d, ToSliceDict
-from tests.util import assert_dict_of_tensors_equal, assert_scalars_equal
+from tests.conftest import assert_dict_of_tensors_equal, assert_scalars_equal
+
+
+@pytest.mark.parametrize(
+    argnames=['family'],
+    argvalues=[('normal',), ('mvnorm',), ('categorical',)]
+)
+def test_multi_output_integration(family: str):
+    if family == 'categorical':
+        y = pd.Series([0] * 3 + [1] * 2 + [2] * 5, name='cat').to_frame()
+    else:
+        y = pd.DataFrame({
+            'y1': [0, 1, 2.5, 1.],
+            'y2': [0, 2, 1, -1]
+        })
+    glm = Glm(family=family)
+    X = pd.DataFrame(index=y.index)
+    glm.fit(X=X, y=y, verbose=False)
+    if family == 'categorical':
+        assert set(glm.predict(X=X)) == {2}
+        np.testing.assert_allclose(glm.predict_proba(X=X).mean(0), np.asarray([.30, .20, .50]), atol=.001)
+    else:
+        np.testing.assert_allclose(glm.predict(X).mean(0), y.mean(), atol=.001)
+
+
+@pytest.mark.parametrize(
+    argnames=['family'],
+    argvalues=[('categorical',), ('bernoulli',)]
+)
+def test_classification_integration(family: str):
+    y = pd.Series([0] * 3 + [1] * 2, name='cat').to_frame()
+    glm = Glm(family=family)
+    X = pd.DataFrame(index=y.index)
+    glm.fit(X=X, y=y, verbose=False)
+    assert set(glm.predict(X=X)) == {0}
+    np.testing.assert_allclose(glm.predict_proba(X=X).mean(0), np.asarray([.60, .40]), atol=.001)
+
+
+@pytest.mark.parametrize(
+    argnames=['family', 'total_count'],
+    argvalues=[
+        ('binomial', 1),
+        ('binomial', 2),
+        ('multinomial', 1),
+        ('multinomial', 2)]
+)
+def test_predict_proba_but_not_classification_integration(family: str, total_count: int):
+    if family == 'binomial':
+        y = {
+            'value': pd.Series(([0] * 3) + ([1] * 2), name='success'),
+        }
+    else:
+        y = {
+            'value': pd.get_dummies(([0] * 3) + ([1] * 2) + ([2] * 3))
+        }
+        y['value'] *= total_count
+    glm = Glm(family=family)
+    X = {
+        'probs': pd.DataFrame(index=y['value'].index),
+        'total_count': total_count * np.ones((len(y['value']), 1))
+    }
+    glm.fit(X=X, y=y, verbose=False)
+    if family == 'binomial':
+        expected_pos = .40 / total_count
+        expected_proba = np.asarray([1 - expected_pos, expected_pos])
+        np.testing.assert_allclose(glm.predict(X=X).mean(0), .40, atol=.001)
+    else:
+        expected_proba = np.asarray([.375, .25, .375])
+        np.testing.assert_allclose(glm.predict(X=X).mean(0), total_count * expected_proba, atol=.001)
+    np.testing.assert_allclose(glm.predict_proba(X=X).mean(0), expected_proba, atol=.001)
 
 
 class _FakeDist:
@@ -36,7 +106,7 @@ def fake_family() -> Family:
     )
 
 
-class TestPredictProba:
+class TestClassifierPredict:
     @pytest.mark.parametrize(
         argnames=['family_nm', 'expected'],
         argvalues=[
@@ -48,7 +118,7 @@ class TestPredictProba:
         """
         method should only exist in instances if their distribution has 'probs'
         """
-        family = Family.from_name(family_nm)
+        family = Glm._init_family(Glm, family_nm)
         glm = Glm(family=family)
         glm._fit = Mock(glm._fit, autospec=True)
         glm.fit(X=None, y=None)
@@ -56,35 +126,59 @@ class TestPredictProba:
         assert hasattr(glm, 'predict_proba') == expected
 
     def test_method(self):
-        """
-        Make sure predict_proba uses the `probs` attribute correctly
-        """
         family = Family(
             distribution_cls=torch.distributions.Binomial,
             params_and_links={'probs': torch.distributions.transforms.identity_transform}
         )
         glm = Glm(family=family)
+        # mock label-encoder:
+        glm.label_encoder_ = create_autospec(LabelEncoder, instance=True)
+        glm.label_encoder_.classes_ = [0, 1]
+        # mock _fit, so that fit() just calls init_family etc.:
         glm._fit = Mock(glm._fit, autospec=True)
-        glm.fit(X=None, y=None)
+        # mock build model-mats, we won't be using inputs:
         glm._build_model_mats = Mock(glm._build_model_mats, autospec=True)
         glm._build_model_mats.return_value = {}, None, None
-        glm._get_dist_kwargs = Mock(glm._get_dist_kwargs, autospec=True)
-        glm._get_dist_kwargs.return_value = {
+        # mock get_dist_kwargs, we want to control the output:
+        glm._get_family_kwargs = Mock(glm._get_family_kwargs, autospec=True)
+        glm._get_family_kwargs.return_value = {
             'probs': to_2d(torch.tensor([.1, .9, .1, .9])),
             'total_count': to_2d(torch.tensor([1, 1, 2, 2]))
         }
+        #
+        glm.fit(X=None, y=None)
+        preds = glm.predict_proba(X=None)
+        assert len(preds.shape) == 2
+        assert preds.shape[1] == 2
+        # first col is p(y=0):
         np.testing.assert_array_equal(
-            glm.predict_proba(X=None),
-            glm._get_dist_kwargs.return_value['probs']
+            preds[:, [0]],
+            1 - glm._get_family_kwargs.return_value['probs']
         )
-        # bonus: make sure standard predict _doesnt_ use probs
+        # second col is p(y=1):
+        np.testing.assert_array_equal(
+            preds[:, [1]],
+            glm._get_family_kwargs.return_value['probs']
+        )
+
+        # make sure default behavior of predict is to choose classes with highest probability
+        glm.predict(X=None)
+        glm.label_encoder_.inverse_transform.assert_called_once()
+        np.testing.assert_array_equal(
+            glm.label_encoder_.inverse_transform.call_args_list[0][0],
+            np.array([[0, 1, 0, 1]])
+        )
+
+        # make sure predict with `mean` works as expected:
         np.testing.assert_array_equal(
             glm.predict(X=None, type='mean'),
-            glm._get_dist_kwargs.return_value['probs'] * glm._get_dist_kwargs.return_value['total_count']
+            glm._get_family_kwargs.return_value['probs'] * glm._get_family_kwargs.return_value['total_count']
         )
 
 
 class TestBuildModelMats:
+    # TODO: should instead test `_get_xdict` and `_get_ydict` separately
+
     @pytest.fixture()
     def glm(self, fake_family: Family):
         glm = Glm(family=fake_family)
@@ -288,9 +382,12 @@ class TestBuildModelMats:
 
 
 class TestInit_Module:
+    # TODO: this test needs to be split into multiple tests and partially rewritten:
+    #   - half the test is testing that `to_slice_dict_` was initialized properly
+    #   - testing this^ by checking if it behaves properly; instead should test that its init method got correct args
+    #   - not mocking `module_factory`
     @pytest.fixture()
     def glm(self, fake_family: Family):
-        # todo: we're not mocking module_factory, so more of an integration test.
         return Glm(family=fake_family)
 
     Params = namedtuple('Params', ['description', 'X', 'y', 'expected_result', 'expected_exception'])
@@ -351,15 +448,12 @@ class TestInit_Module:
                           expected_result: torch.nn.ModuleDict,
                           expected_exception: Optional[Type[Exception]],
                           description: str):
-        """
-        Test that _init_module calls the `module_factory`, handling x and y shapes properly.
-        """
 
         if expected_exception:
             with pytest.raises(expected_exception):
                 glm._init_module(X=X, y=y)
         else:
-            glm.module_ = glm._init_module(X=X, y=y)
+            glm._init_module(X=X, y=y)
             result_sd_shapes = {k: v.shape for k, v in glm.module_.state_dict().items()}
             expected_result_sd_shapes = {k: v.shape for k, v in expected_result.state_dict().items()}
             assert result_sd_shapes == expected_result_sd_shapes
@@ -425,7 +519,7 @@ def test_log_prob(value: torch.Tensor,
     y = {'value': value}
     if weight is not None:
         y['weight'] = weight
-    glm._module_ = glm._init_module({}, y=y)
+    glm._init_module({}, y=y)
 
     # call get_log_prob:
     mm_dict, lp_dict = glm._build_model_mats(X={}, y=y, include_y=True)
