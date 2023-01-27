@@ -4,6 +4,7 @@ For the not-that-rare data-scientist who's stuck in python 3.7
 from typing import Sequence
 
 import numpy as np
+from pandas import isna
 
 from sklearn.impute import SimpleImputer as SimpleImputerBase
 from sklearn.preprocessing import FunctionTransformer as FunctionTransformerBase
@@ -47,7 +48,7 @@ class FunctionTransformer(FunctionTransformerBase):
 class SimpleImputer(SimpleImputerBase):
     def get_feature_names_out(self, input_features=None):
         input_features = _check_feature_names_in(self, input_features)
-        names = input_features[~np.isnan(self.statistics_)]
+        names = input_features[~isna(self.statistics_)]
         if not self.add_indicator:
             return names
         prefix = type(self.indicator_).__name__.lower()
