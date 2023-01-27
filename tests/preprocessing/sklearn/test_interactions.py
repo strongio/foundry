@@ -1,108 +1,13 @@
 from typing import Union, Type
 from unittest.mock import create_autospec
 
-import numpy as np
 import pandas as pd
 import pytest
 from pandas.core.arrays import SparseArray
-from pandas.testing import assert_frame_equal
-from scipy.sparse import spmatrix
 from sklearn.compose import make_column_selector
-from sklearn.preprocessing import OneHotEncoder
 from sklearn.exceptions import NotFittedError
 
-from foundry.preprocessing import InteractionFeatures, DataFrameTransformer, ColumnDropper
-
-
-def make_small_df():
-    return pd.DataFrame({
-        "A": [0., 1., 2., 3.],
-        "B": [0.5, 0.5, 0.5, 0.5],
-        "C": [-1., -2., -3., -4.],
-    })
-
-
-@pytest.mark.parametrize(
-    "kwargs, expected",
-    [
-        pytest.param(
-            {'drop_zero_var': False},
-            make_small_df(),
-            id="no names/pattern"
-        ),
-        pytest.param(
-            {"names": "A", 'drop_zero_var': False},
-            pd.DataFrame({"B": [0.5, 0.5, 0.5, 0.5], "C": [-1., -2., -3., -4.]}),
-            id="drop based on name"
-        ),
-        pytest.param(
-            {"names": ["A", "B"], 'drop_zero_var': False},
-            pd.DataFrame({"C": [-1., -2., -3., -4., ]}),
-            id="drop based on names"
-        ),
-        pytest.param(
-            {"pattern": "[AB]", 'drop_zero_var': False},
-            pd.DataFrame({"C": [-1., -2., -3., -4., ]}),
-            id="drop based on pattern"
-        ),
-        pytest.param(
-            {'drop_zero_var': True},
-            pd.DataFrame({"A": [0., 1., 2., 3., ], "C": [-1., -2., -3., -4.]}),
-            id="drop zero-var columns"
-        ),
-        pytest.param(
-            {'names': 'A', 'drop_zero_var': True},
-            pd.DataFrame({"C": [-1., -2., -3., -4.]}),
-            id="drop zero-var columns and more"
-        ),
-        pytest.param(
-            {"names": "A", "pattern": ".*", 'drop_zero_var': False},
-            ValueError,
-            id="can't pass both name and pattern"
-        ),
-        pytest.param(
-            {"names": "D", 'drop_zero_var': False},
-            RuntimeError,
-            id="can't pass colname that's not in df"
-        ),
-    ]
-)
-def test_column_dropper(kwargs: dict,
-                        expected: Union[pd.DataFrame, Type[Exception]]):
-    small_df = make_small_df()
-    my_drop_transformer = ColumnDropper(**kwargs)
-    if isinstance(expected, pd.DataFrame):
-        test = my_drop_transformer.fit(small_df).transform(small_df)
-        assert_frame_equal(expected, test)
-    else:
-        with pytest.raises(expected):
-            my_drop_transformer.fit(small_df)
-
-
-class TestDataFrameTransformer:
-    @pytest.mark.parametrize(
-        argnames=['X', 'expected'],
-        argvalues=[
-            # resets index:
-            (pd.DataFrame({'x': [1, 2, 3]}, index=[1, 2, 3]), pd.DataFrame({'x': [1, 2, 3]})),
-            # convert numpy:
-            (np.zeros((3, 2)), pd.DataFrame(np.zeros((3, 2)))),
-            # convert sparse:
-            (
-                    OneHotEncoder(sparse=True).fit_transform([['a'], ['b'], ['c'], ['d']]),
-                    pd.DataFrame(np.eye(4))
-            )
-        ]
-    )
-    def test__convert_single_transform_to_df(self,
-                                             X: Union[np.ndarray, pd.DataFrame, spmatrix],
-                                             expected: pd.DataFrame):
-        result = DataFrameTransformer._convert_single_transform_to_df(X)
-        if isinstance(X, spmatrix):
-            assert hasattr(result, 'sparse')
-            assert result.sparse.density == .25
-            result = result.sparse.to_dense()
-        pd.testing.assert_frame_equal(result, expected)
+from foundry.preprocessing import InteractionFeatures
 
 
 class TestInteractionFeatures:
