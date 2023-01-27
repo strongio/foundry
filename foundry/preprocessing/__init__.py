@@ -3,7 +3,8 @@ from .sklearn import (
     InteractionFeatures,
     ColumnDropper,
     FunctionTransformer,
-    SimpleImputer
+    SimpleImputer,
+    as_transformer,
 )
 from .categorical import ToCategorical
 from .dates import FourierFeatures
