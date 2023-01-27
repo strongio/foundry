@@ -9,6 +9,7 @@ import pytest
 import torch.distributions
 
 from foundry.glm import Glm
+from foundry.glm.distributions import NegativeBinomial
 from foundry.glm.family import Family
 from foundry.glm.glm import family_from_string
 from foundry.glm.util import SoftmaxKp1
@@ -54,14 +55,14 @@ class TestFamily:
             Params(
                 alias='negative_binomial',
                 call_input={
-                    'probs': torch.tensor([0., 1.]).unsqueeze(-1),
-                    'total_count': torch.tensor([0., 1.]).unsqueeze(-1)
+                    'loc': torch.tensor([0., 0.]).unsqueeze(-1),
+                    'dispersion': torch.tensor([0., 1.]).unsqueeze(-1)
                 },
                 expected_supports_predict_proba=False,
-                expected_has_total_count=True,
-                expected_call_output=torch.distributions.NegativeBinomial(
-                    probs=torch.tensor([.5, 0.7311]).unsqueeze(-1),
-                    total_count=torch.tensor([1., math.e]).unsqueeze(-1)
+                expected_has_total_count=False,
+                expected_call_output=NegativeBinomial(
+                    loc=torch.tensor([1., 1.]).unsqueeze(-1),
+                    dispersion=torch.tensor([1., math.e]).unsqueeze(-1)
                 ),
             ),
             Params(
