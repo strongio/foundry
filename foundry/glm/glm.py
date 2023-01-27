@@ -20,6 +20,7 @@ from tqdm import tqdm
 from foundry.covariance import Covariance
 from foundry.hessian import hessian
 from foundry.penalty import L2
+from .distributions import NegativeBinomial
 
 from .family import Family
 from .util import NoWeightModule, Stopping, SigmoidTransformForClassification, Multinomial, SoftmaxKp1
@@ -81,9 +82,8 @@ class Glm(BaseEstimator):
             {'rate': transforms.ExpTransform()}
         ),
         'negative_binomial': (
-            distributions.NegativeBinomial,
-            {'probs': transforms.SigmoidTransform(), 'total_count': transforms.ExpTransform()},
-            False
+            NegativeBinomial,
+            {'loc': transforms.ExpTransform(), 'dispersion': transforms.ExpTransform()},
         ),
         'exponential': (
             torch.distributions.Exponential,
@@ -506,20 +506,21 @@ class Glm(BaseEstimator):
 
         # standardize X and y:
         X = self.to_slice_dict_.transform(X)
-        if isinstance(y, dict):
-            y = y['value']
-        y = to_2d(np.asanyarray(y))
+        if not isinstance(y, dict):
+            y = {'value': y}
+        y_arr = y['value']
+        y_arr = to_2d(np.asanyarray(y_arr))
 
         # if classification, handle label encoding:
         self.label_encoder_ = None
         if self.family.supports_predict_proba and not self.family.has_total_count:
-            if y.shape[-1] != 1:
+            if y_arr.shape[-1] != 1:
                 raise ValueError(
                     f"GLM w/family {self.family} expects a 1D ``y`` whose values are the class-labels. However,"
-                    f"y.shape is {y.shape}."
+                    f"y.shape is {y_arr.shape}."
                 )
             self.label_encoder_ = LabelEncoder()
-            self.label_encoder_.fit(to_1d(y))
+            self.label_encoder_.fit(to_1d(y_arr))
             assert len(self.label_encoder_.classes_) > 1
 
         # create modules that predict params:
@@ -527,7 +528,7 @@ class Glm(BaseEstimator):
         self.module_ = torch.nn.ModuleDict()
         for dp in self.family.params:
             Xp = X.get(dp, None)
-            module_num_outputs = self._get_module_num_outputs(y, dp)
+            module_num_outputs = self._get_module_num_outputs(y_arr, dp)
             if Xp is None or not Xp.shape[1]:
                 # always use the base approach when no input features:
                 module, nms = Glm.module_factory(X=None, output_dim=module_num_outputs)
