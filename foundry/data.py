@@ -5,6 +5,35 @@ import torch
 from sklearn.datasets import make_regression
 from foundry.glm.glm import family_from_string
 
+import os
+import zipfile
+import pandas as pd
+from io import BytesIO
+
+
+def get_online_news_dataset(local_path: str = "~/foundry_cache", download_if_missing: bool = True) -> pd.DataFrame:
+    local_path = os.path.expanduser(local_path)
+    os.makedirs(local_path, exist_ok=True)
+
+    local_path = os.path.join(local_path, "OnlineNewsPopularity.csv")
+    try:
+        dataset = pd.read_csv(local_path)
+    except FileNotFoundError as e:
+        if not download_if_missing:
+            raise e
+        print(str(e))
+        import requests
+        dataset_url = "https://archive.ics.uci.edu/ml/machine-learning-databases/00332/OnlineNewsPopularity.zip"
+        response = requests.get(dataset_url)
+        zip_archive = zipfile.ZipFile(BytesIO(response.content))
+        with zip_archive.open("OnlineNewsPopularity/OnlineNewsPopularity.csv") as csv_file:
+            dataset = pd.read_csv(csv_file, sep=", ", engine="python")
+        dataset.to_csv(local_path, index=False)
+
+    dataset.rename(columns={'self_reference_avg_sharess': 'self_reference_avg_shares'}, inplace=True)
+
+    return dataset
+
 
 @torch.inference_mode()
 def simulate_data(family: str,
