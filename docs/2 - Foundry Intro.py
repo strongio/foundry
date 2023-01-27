@@ -21,6 +21,7 @@
 import numpy as np
 import pandas as pd
 from plotnine import *
+from sklearn.compose import make_column_selector
 from sklearn.metrics import accuracy_score, r2_score
 from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
 from sklearn.pipeline import make_pipeline, Pipeline
@@ -35,7 +36,6 @@ from foundry.preprocessing import (
     InteractionFeatures, 
     as_transformer, 
     identity, 
-    make_column_selector,
 )
 
 
