@@ -18,7 +18,6 @@ class Family:
                  params_and_links: Dict[str, Callable],
                  supports_predict_proba: Optional[bool] = None):
         """
-
         :param distribution_cls: A distribution class.
         :param params_and_links: A dictionary whose keys are names of distribution-parameters (i.e. init-args for the
          distribution-class and values are (inverse-)link functions.
@@ -29,13 +28,8 @@ class Family:
         self.params_and_links = params_and_links
 
         # supports_predict_proba:
-        has_probs_attr = hasattr(self.distribution_cls, 'probs')
         if supports_predict_proba is None:
-            supports_predict_proba = has_probs_attr
-        if supports_predict_proba and not has_probs_attr:
-            raise TypeError(
-                f"`supports_predict_proba=True`, but {self.distribution_cls.__name__} doesn't have a `probs` attr."
-            )
+            supports_predict_proba = ('probs' in self.params_and_links)
         self.supports_predict_proba = supports_predict_proba
 
         # if distribution has `total_count` (binomial/multinomial) then we can't fully support classification;
