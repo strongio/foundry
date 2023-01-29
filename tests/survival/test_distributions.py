@@ -5,7 +5,7 @@ import torch
 from torch.distributions import Exponential, Weibull
 
 from foundry.glm.family import Family
-from foundry.survival.distributions import weibull_log_surv, CeilingWeibull
+from foundry.glm.distributions import weibull_log_surv, CeilingWeibull
 from tests.conftest import assert_scalars_equal, assert_tensors_equal
 
 

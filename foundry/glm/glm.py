@@ -18,9 +18,15 @@ from sklearn.exceptions import NotFittedError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from tqdm import tqdm
 
-from foundry.glm.distributions import NegativeBinomial
+from foundry.glm.distributions import (
+    NegativeBinomial,
+    Multinomial,
+    Exponential,
+    Weibull,
+    CeilingWeibull
+)
 from foundry.glm.family import Family, SurvivalFamily, FamilyArgs
-from foundry.glm.util import NoWeightModule, Stopping, SigmoidTransformForClassification, Multinomial, SoftmaxKp1
+from foundry.glm.util import NoWeightModule, Stopping, SigmoidTransformForClassification, SoftmaxKp1
 
 from foundry.covariance import Covariance
 from foundry.hessian import hessian
@@ -37,7 +43,6 @@ from foundry.util import (
     ToSliceDict,
     SliceDict
 )
-from foundry.survival.distributions import CeilingWeibull
 
 N_FIT_RETRIES = int(os.getenv('FOUNDRY_N_FIT_RETRIES', 10))
 
@@ -69,11 +74,11 @@ family_names = {
         {'loc': transforms.ExpTransform(), 'dispersion': transforms.ExpTransform()},
     ),
     'exponential': FamilyArgs(
-        torch.distributions.Exponential,
+        Exponential,
         {'rate': transforms.ExpTransform(), }
     ),
     'weibull': FamilyArgs(
-        torch.distributions.Weibull,
+        Weibull,
         {
             'scale': transforms.ExpTransform(),
             'concentration': transforms.ExpTransform()

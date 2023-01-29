@@ -1,9 +1,7 @@
-from typing import Optional, Union
+from typing import Optional
 
 import torch
-from torch import distributions
-from torch.distributions import transforms, constraints
-from torch.distributions.utils import broadcast_all
+from torch.distributions import transforms
 
 
 class SoftmaxKp1:
@@ -26,64 +24,6 @@ class SoftmaxKp1:
 class SigmoidTransformForClassification(transforms.SigmoidTransform):
     def get_param_dim(self, y_dim: int) -> int:
         return y_dim - 1
-
-
-class _MultinomialStrict(constraints.Constraint):
-    is_discrete = True
-    event_dim = 1
-
-    def __init__(self, upper_bound: Optional[torch.Tensor]):
-        self.upper_bound = upper_bound
-
-    def check(self, x: torch.Tensor) -> bool:
-        check = (x >= 0).all(dim=-1)
-        if self.upper_bound is not None:
-            check &= (x.sum(dim=-1) == self.upper_bound).all()
-        return check
-
-
-class Multinomial(distributions.Multinomial):
-    """
-    In torch's Multinomial, ``total_count`` is used:
-
-    1) Only for validation in log_prob (which unnecessarily enforces a limitation that total_count be a single value).
-    2) Critically in ``sample``, where sampling for a tensor of total-counts is limited by
-     https://github.com/pytorch/pytorch/issues/42407.
-    3) In mean, variance, etc. where total_count can be a tensor without issue.
-
-    In this implementation, ``total_count`` is instead allowed to be a tensor, except when using ``sample``.
-    """
-
-    def __init__(self,
-                 total_count: Optional[torch.Tensor] = None,
-                 probs: Optional[torch.Tensor] = None,
-                 logits: Optional[torch.Tensor] = None,
-                 validate_args: Optional[bool] = None):
-        self._categorical = torch.distributions.Categorical(probs=probs, logits=logits)
-        batch_shape = self._categorical.batch_shape
-        event_shape = self._categorical.param_shape[-1:]
-        if isinstance(total_count, torch.Tensor) and total_count.shape != batch_shape:
-            raise ValueError(
-                f"If ``total_count`` is a tensor, it must have shape==probs/logits.shape[:-1] ({batch_shape})"
-            )
-        self.total_count: Optional[Union[torch.Tensor, int]] = total_count
-        super(distributions.Multinomial, self).__init__(batch_shape, event_shape, validate_args=validate_args)
-
-    @constraints.dependent_property(is_discrete=True, event_dim=1)
-    def support(self):
-        return _MultinomialStrict(self.total_count)
-
-    def sample(self, sample_shape=torch.Size(), total_count: Optional[int] = None):
-        old_total_count = self.total_count
-        try:
-            if total_count is not None:
-                self.total_count = total_count
-            if not isinstance(self.total_count, int):
-                raise NotImplementedError('inhomogeneous total_count is not supported')
-            out = super().sample(sample_shape=sample_shape)
-        finally:
-            self.total_count = old_total_count
-        return out
 
 
 class NoWeightModule(torch.nn.Module):
