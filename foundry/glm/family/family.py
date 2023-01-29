@@ -1,11 +1,23 @@
 import inspect
-from typing import Callable, Dict, Type, Optional, Tuple, Sequence
+from dataclasses import dataclass, asdict
+from typing import Callable, Dict, Type, Optional, Tuple, Sequence, Union
 from warnings import warn
 
 import torch
 from torch import distributions
 
 from foundry.util import is_invalid, to_1d, to_2d, log1mexp
+
+
+@dataclass
+class FamilyArgs:
+    distribution_cls: Type[torch.distributions.Distribution]
+    params_and_links: Dict[str, Callable]
+    supports_predict_proba: Optional[bool] = None
+    from_y: Sequence[str] = ()
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 class Family:
@@ -16,13 +28,19 @@ class Family:
     def __init__(self,
                  distribution_cls: Type[torch.distributions.Distribution],
                  params_and_links: Dict[str, Callable],
-                 supports_predict_proba: Optional[bool] = None):
+                 supports_predict_proba: Optional[bool] = None,
+                 from_y: Sequence[str] = ()):
         """
         :param distribution_cls: A distribution class.
         :param params_and_links: A dictionary whose keys are names of distribution-parameters (i.e. init-args for the
          distribution-class and values are (inverse-)link functions.
         :param supports_predict_proba: Does this distribution support predicting probabilities for its values? Default
          is determined by whether the distribution has a ``probs`` attribute.
+        :param from_y: :class:`foundry.glm.Glm` will call this family with the values in the ``X`` dict, to create an
+         instance of the distribution. However, some torch distributions take values at ``__init__`` that are not very
+         natural to include in model-matrices, but are instead traditionally included as part of the target (most
+         notably, Binomial/Multinomial "total_count"). This argument will indicate to the Glm the values in the y-dict
+         that, if present, should be moved from the y-dict to to the X-dict, to be included in the family call.
         """
         self.distribution_cls = distribution_cls
         self.params_and_links = params_and_links
@@ -38,6 +56,9 @@ class Family:
             p.name for p in inspect.signature(self.distribution_cls.__init__).parameters.values()
         )
         self.has_total_count = 'total_count' in init_argnames
+
+        # y-values to pass to __call__
+        self.from_y = from_y
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.distribution_cls.__name__})"

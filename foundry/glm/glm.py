@@ -13,28 +13,104 @@ from torch.distributions import transforms
 
 from sklearn.base import BaseEstimator
 from sklearn.preprocessing import LabelEncoder
+from sklearn.exceptions import NotFittedError
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from tqdm import tqdm
 
+from foundry.glm.distributions import NegativeBinomial
+from foundry.glm.family import Family, SurvivalFamily, FamilyArgs
+from foundry.glm.util import NoWeightModule, Stopping, SigmoidTransformForClassification, Multinomial, SoftmaxKp1
+
 from foundry.covariance import Covariance
 from foundry.hessian import hessian
 from foundry.penalty import L2
-from .distributions import NegativeBinomial
-
-from .family import Family
-from .util import NoWeightModule, Stopping, SigmoidTransformForClassification, Multinomial, SoftmaxKp1
-
 from foundry.util import (
-    FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d, is_array, ModelMatrix, ToSliceDict, to_1d,
+    FitFailedException,
+    is_invalid,
+    get_to_kwargs,
+    to_tensor,
+    to_1d,
+    to_2d,
+    is_array,
+    ModelMatrix,
+    ToSliceDict,
     SliceDict
 )
-from sklearn.exceptions import NotFittedError
-
-from ..survival.distributions import CeilingWeibull
-from foundry.glm.family.survival import SurvivalFamily
+from foundry.survival.distributions import CeilingWeibull
 
 N_FIT_RETRIES = int(os.getenv('FOUNDRY_N_FIT_RETRIES', 10))
+
+family_names = {
+    'bernoulli': FamilyArgs(
+        distributions.Bernoulli,
+        {'probs': SigmoidTransformForClassification()},
+    ),
+    'binomial': FamilyArgs(
+        distributions.Binomial,
+        {'probs': transforms.SigmoidTransform()},
+        from_y=['total_count']
+    ),
+    'categorical': FamilyArgs(
+        distributions.Categorical,
+        {'probs': SoftmaxKp1()}
+    ),
+    'multinomial': FamilyArgs(
+        Multinomial,
+        {'probs': SoftmaxKp1()}
+        # from_y={'sample_weight': 'total_count'} # TODO
+    ),
+    'poisson': FamilyArgs(
+        distributions.Poisson,
+        {'rate': transforms.ExpTransform()}
+    ),
+    'negative_binomial': FamilyArgs(
+        NegativeBinomial,
+        {'loc': transforms.ExpTransform(), 'dispersion': transforms.ExpTransform()},
+    ),
+    'exponential': FamilyArgs(
+        torch.distributions.Exponential,
+        {'rate': transforms.ExpTransform(), }
+    ),
+    'weibull': FamilyArgs(
+        torch.distributions.Weibull,
+        {
+            'scale': transforms.ExpTransform(),
+            'concentration': transforms.ExpTransform()
+        }
+    ),
+    'normal': FamilyArgs(
+        torch.distributions.Normal,
+        {
+            'loc': transforms.identity_transform,
+            'scale': transforms.ExpTransform()
+        }
+    ),
+    'multivariate_normal': FamilyArgs(
+        torch.distributions.MultivariateNormal,
+        {
+            'loc': transforms.identity_transform,
+            'covariance_matrix': Covariance()
+        }
+    ),
+    'lognormal': FamilyArgs(
+        torch.distributions.LogNormal,
+        {
+            'loc': transforms.identity_transform,
+            'scale': transforms.ExpTransform()
+        }
+    ),
+    'ceiling_weibull': FamilyArgs(
+        CeilingWeibull,
+        {
+            'scale': transforms.ExpTransform(),
+            'concentration': transforms.ExpTransform(),
+            'ceiling': transforms.SigmoidTransform()
+        }
+    )
+}
+family_names['gaussian'] = family_names['normal']
+family_names['mvnorm'] = family_names['multivariate_normal']
 
 
 class Glm(BaseEstimator):
@@ -60,76 +136,7 @@ class Glm(BaseEstimator):
     :param sparse_mm_threshold: Density threshold for creating a sparse model-matrix. If X has density less than this,
      the model-matrix will be sparse; otherwise it will be dense. Default .05.
     """
-    family_names = {
-        'bernoulli': (
-            distributions.Bernoulli,
-            {'probs': SigmoidTransformForClassification()},
-        ),
-        'binomial': (
-            distributions.Binomial,
-            {'probs': transforms.SigmoidTransform()},
-        ),
-        'categorical': (
-            distributions.Categorical,
-            {'probs': SoftmaxKp1()}
-        ),
-        'multinomial': (
-            Multinomial,
-            {'probs': SoftmaxKp1()}
-        ),
-        'poisson': (
-            distributions.Poisson,
-            {'rate': transforms.ExpTransform()}
-        ),
-        'negative_binomial': (
-            NegativeBinomial,
-            {'loc': transforms.ExpTransform(), 'dispersion': transforms.ExpTransform()},
-        ),
-        'exponential': (
-            torch.distributions.Exponential,
-            {
-                'rate': transforms.ExpTransform(),
-            }
-        ),
-        'weibull': (
-            torch.distributions.Weibull,
-            {
-                'scale': transforms.ExpTransform(),
-                'concentration': transforms.ExpTransform()
-            }
-        ),
-        'normal': (
-            torch.distributions.Normal,
-            {
-                'loc': transforms.identity_transform,
-                'scale': transforms.ExpTransform()
-            }
-        ),
-        'multivariate_normal': (
-            torch.distributions.MultivariateNormal,
-            {
-                'loc': transforms.identity_transform,
-                'covariance_matrix': Covariance()
-            }
-        ),
-        'lognormal': (
-            torch.distributions.LogNormal,
-            {
-                'loc': transforms.identity_transform,
-                'scale': transforms.ExpTransform()
-            }
-        ),
-        'ceiling_weibull': (
-            CeilingWeibull,
-            {
-                'scale': transforms.ExpTransform(),
-                'concentration': transforms.ExpTransform(),
-                'ceiling': transforms.SigmoidTransform()
-            }
-        )
-    }
-    family_names['gaussian'] = family_names['normal']
-    family_names['mvnorm'] = family_names['multivariate_normal']
+    family_names = family_names
 
     def __init__(self,
                  family: Union[str, Family],
@@ -498,9 +505,15 @@ class Glm(BaseEstimator):
         if Xdict and list(Xdict.values())[0].shape[0] != ydict['value'].shape[0]:
             raise ValueError("Expected X.shape[0] to match y.shape[0]")
 
+        for key in self.family.from_y:
+            if key in ydict:
+                if key in Xdict:
+                    warn(f"'{key}' in both X and y, ignoring y")
+                Xdict[key] = ydict.pop(key)
+
         return Xdict, ydict
 
-    def _init_module(self, X: ModelMatrix, y: ModelMatrix) -> torch.nn.ModuleDict:
+    def _init_module(self, X: ModelMatrix, y: ModelMatrix):
         # memorize the col -> dist-param mapping
         self._init_col_mapping(X)
 
@@ -775,6 +788,6 @@ def family_from_string(family: str, y: Optional[dict] = None) -> Family:
             assert is_survival
 
     if is_survival:
-        return SurvivalFamily(*Glm.family_names[family])
+        return SurvivalFamily(**family_names[family].to_dict())
     else:
-        return Family(*Glm.family_names[family])
+        return Family(**family_names[family].to_dict())
