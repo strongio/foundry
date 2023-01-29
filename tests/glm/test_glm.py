@@ -73,12 +73,11 @@ def test_predict_proba_but_not_classification_integration(family: str, total_cou
             'value': pd.get_dummies(([0] * 3) + ([1] * 2) + ([2] * 3))
         }
         y['value'] *= total_count
+    y['total_count'] = total_count
     glm = Glm(family=family)
-    X = {
-        'probs': pd.DataFrame(index=y['value'].index),
-        'total_count': total_count * np.ones((len(y['value']), 1))
-    }
+    X = pd.DataFrame(index=y['value'].index)
     glm.fit(X=X, y=y, verbose=False)
+    X = {'probs': X, 'total_count': total_count}
     if family == 'binomial':
         expected_pos = .40 / total_count
         expected_proba = np.asarray([1 - expected_pos, expected_pos])

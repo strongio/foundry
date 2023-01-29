@@ -57,8 +57,8 @@ family_names = {
     ),
     'multinomial': FamilyArgs(
         Multinomial,
-        {'probs': SoftmaxKp1()}
-        # from_y={'sample_weight': 'total_count'} # TODO
+        {'probs': SoftmaxKp1()},
+        from_y=['total_count']
     ),
     'poisson': FamilyArgs(
         distributions.Poisson,
@@ -457,17 +457,20 @@ class Glm(BaseEstimator):
         _to_kwargs = get_to_kwargs(self.module_)
 
         for k in list(ydict):
-            if not hasattr(ydict[k], '__iter__'):
-                # wait until we have a use-case
-                raise NotImplementedError(
-                    f"Unclear how to handle {k}, please report this error to the package maintainer"
-                )
-
             # special handling for classification:
             if k == 'value' and self.label_encoder_ is not None:
                 ydict['value'] = self.label_encoder_.transform(to_1d(ydict['value']))
                 ydict['value'] = to_tensor(ydict['value'], **_to_kwargs)
                 continue
+
+            if not hasattr(ydict[k], '__iter__'):
+                if isinstance(ydict[k], (int, float)):
+                    continue  # pass as-is
+                else:
+                    # wait until we have a use-case
+                    raise NotImplementedError(
+                        f"Unclear how to handle {k}, please report this error to the package maintainer"
+                    )
 
             # standard handling:
             ydict[k] = to_2d(to_tensor(ydict[k], **_to_kwargs))
