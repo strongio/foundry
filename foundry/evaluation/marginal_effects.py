@@ -8,6 +8,7 @@ from sklearn.pipeline import Pipeline
 
 from typing import Callable, Sequence, Union
 
+from sklearn.utils import _safe_indexing
 from tqdm.auto import tqdm
 
 from foundry.util import to_1d
@@ -111,7 +112,7 @@ class MarginalEffects:
                  vary_features: Sequence[Union[str, Binned]],
                  groupby_features: Collection[Union[str, Binned]] = (),
                  vary_features_aggfun: Union[str, dict, Callable] = 'mean',
-                 marginalize_aggfun: Union[str, dict, Callable, None] = 'median',
+                 marginalize_aggfun: Union[str, dict, Callable, None] = 'downsample100000',
                  y_aggfun: Union[str, Callable] = 'mean',
                  **predict_kwargs) -> 'MarginalEffects':
         """
@@ -131,15 +132,22 @@ class MarginalEffects:
          aggregation that will be applied, or 'mid' to use the midpoint of the bin. The latter will be used regardless
          when no actual data exists in that bin. This argument can also be a dictionary with keys being feature-names.
         :param marginalize_aggfun: How to marginalize across features that are not in the vary/groupby. This is a
-         string/callable that will be applied to each feature. Default: median. Can also use a dictionary of these,
-         with keys being feature-names. If set to False/None, will *not* collapse these, but instead call ``predict``
-         for each row then summarize the *predictions* with `y_aggfun`. WARNING: this will be slow for a large dataset,
-         downsampling recommended.
+         string/callable that will be applied to each feature. Can also be 'downsample{int}' or false-y, in which case
+         will *not* collapse these, but instead call ``predict`` for each row then summarize the *predictions* with
+         `y_aggfun`. If 'downsample{int}' then downsampling will be performed before this (slow) procedure.
         :param y_aggfun: The function to use when aggregating predictions (and actuals, if supplied). Only has an
          effect if ``marginalize_aggfun` is False/None.
         :param predict_kwargs: Keyword-arguments to pass to the pipeline's ``predict`` method.
         """
-        X = X.copy(deep=False)
+        if isinstance(marginalize_aggfun, str) and marginalize_aggfun.startswith('downsample'):
+            downsample_int = int(marginalize_aggfun.replace('downsample', '').rstrip('_'))
+            idx = np.random.choice(X.shape[0], size=downsample_int, replace=False)
+            X = _safe_indexing(X, idx).reset_index(drop=True)
+            if y is not None:
+                y = _safe_indexing(y, idx)
+            marginalize_aggfun = False
+        else:
+            X = X.copy(deep=False)
 
         # validate/standardize args:
         vary_features = self._standardize_maybe_binned(X, vary_features)
@@ -219,7 +227,7 @@ class MarginalEffects:
         else:
             pred_colnames = set()
             if df_no_vary.shape[0] > 100_000 and not self.quiet:
-                print("Consider setting `marginalize_aggfun` or downsampling data.")
+                print("Consider setting `marginalize_aggfun='downsample100000'`.")
 
             chunks = [df for _, df in df_vary_grid.groupby(list(vary_features), sort=False)]
             if not self.quiet:
@@ -254,6 +262,8 @@ class MarginalEffects:
             'groupby_features': groupby_features
         })
         return self
+
+    fit = __call__
 
     def to_dataframe(self) -> pd.DataFrame:
         if self._dataframe is None:
