@@ -147,7 +147,7 @@ class Glm(BaseEstimator):
                  family: Union[str, Family],
                  penalty: Union[float, Sequence[float], Dict[str, float]] = 0.,
                  col_mapping: Union[list, dict, None] = None,
-                 sparse_mm_threshold: float = .05,
+                 sparse_mm_threshold: float = .01,
                  _warm_start: Optional[dict] = None):
 
         self.family = family
