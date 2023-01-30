@@ -277,7 +277,7 @@ class MarginalEffects:
              include_actuals: Optional[bool] = None) -> 'ggplot':
 
         try:
-            from plotnine import ggplot, aes, geom_line, geom_hline, facet_wrap, theme, theme_bw, geom_point
+            from plotnine import ggplot, aes, geom_line, geom_hline, facet_wrap, theme, theme_bw, geom_point, ylab
         except ImportError as e:
             raise RuntimeError("plotting requires `plotnine` package") from e
         if isinstance(facets, str):
@@ -349,8 +349,9 @@ class MarginalEffects:
         if include_actuals:
             if 'actual' in self._dataframe.columns:
                 plot += geom_point(aes(y='actual', size='n'))
+                plot += ylab("predicted (line) & actual (dots)")
             else:
-                raise RuntimeError("`y` was not passed so cannot include_actuals")
+                raise RuntimeError("`y` was not passed so cannot `include_actuals`")
         if facets:
             plot += facet_wrap(facets, scales='free_y', labeller='label_both')
         return plot
