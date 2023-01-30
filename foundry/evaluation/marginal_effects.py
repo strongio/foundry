@@ -300,8 +300,10 @@ class MarginalEffects:
         available_default_features = list(self.config['vary_features']) + list(self.config['groupby_features'])
 
         # if x is set, that's not an available default feature:
-        if x and x in available_default_features:
-            available_default_features.remove(x)
+        if x:
+            for colname in [x, x.replace('_binned', '')]:
+                if colname in available_default_features:
+                    available_default_features.remove(colname)
         # if color (or its binned version) is set, that's not an available default feature:
         if color:
             for colname in [color, color.replace('_binned', '')]:
@@ -330,6 +332,8 @@ class MarginalEffects:
             color = available_default_features.pop(0)
         if color:
             aes_kwargs['group'] = aes_kwargs['color'] = color
+        else:
+            aes_kwargs['group'] = '1'
 
         # remaining go to facets:
         if available_default_features:
