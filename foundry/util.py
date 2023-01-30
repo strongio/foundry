@@ -25,6 +25,13 @@ def is_array(x) -> bool:
     return hasattr(x, '__array__')
 
 
+def get_df_density(x: pd.DataFrame) -> float:
+    densities = pd.Series(np.ones(x.shape[1]), index=x.columns)
+    sparse_cols = x.columns[x.apply(pd.api.types.is_sparse).astype('bool').values]
+    densities[sparse_cols] = x[sparse_cols].apply(lambda x: x.sparse.density)
+    return densities.mean()
+
+
 def to_tensor(x: Union[np.ndarray, torch.Tensor, pd.DataFrame],
               sparse_threshold: float = 0.,
               **kwargs) -> torch.Tensor:
@@ -43,9 +50,7 @@ def to_tensor(x: Union[np.ndarray, torch.Tensor, pd.DataFrame],
         sparse_cols = x.columns[x.apply(pd.api.types.is_sparse).astype('bool').values]
         dense_cols = x.columns[~x.columns.isin(sparse_cols)]
         if len(sparse_cols):
-            densities = pd.Series(np.ones(x.shape[1]), index=x.columns)
-            densities[sparse_cols] = x[sparse_cols].apply(lambda x: x.sparse.density)
-            if densities.mean() < sparse_threshold:
+            if get_df_density(x) < sparse_threshold:
                 sparse_dtypes = x[sparse_cols].dtypes
 
                 # get fill-value:
