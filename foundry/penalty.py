@@ -31,6 +31,15 @@ class L2(Penalty):
         self.mean = mean
         self.precision = precision
 
+    def __repr__(self) -> str:
+        format_kwds = {'precision': self.precision}
+        if isinstance(self.mean, torch.Tensor) or self.mean:
+            format_kwds['mean'] = self.mean
+        return "{cls}({kwds})".format(
+            cls=type(self).__name__,
+            kwds=", ".join(f"{k}={v}" for k, v in format_kwds.items())
+        )
+
     @staticmethod
     def _arg_to_tensor(arg: Union[float, Sequence[Tuple[callable, float]]],
                        feature_nms: np.ndarray,

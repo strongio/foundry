@@ -269,6 +269,7 @@ class Glm(BaseEstimator):
             self.set_params(penalty=penalties[len(penalties) // 2])
             self._fit(X=X, y=y, **fit_kwargs)
             self.set_params(_warm_start=self.module_.state_dict())
+            self.module_ = None
             fit_kwargs['verbose'] = False
 
             # search:
@@ -286,7 +287,7 @@ class Glm(BaseEstimator):
             best_penalty = gcv.best_params_['penalty']
             if kwargs.get('verbose', True):
                 print(f"Fitting with best_penalty={best_penalty}...")
-            self.set_params(penalty=best_penalty)
+            self.set_params(penalty=best_penalty, _warm_start=None)
             return self._fit(X=X, y=y, **kwargs)
         else:
             return self._fit(X=X, y=y, sample_weight=sample_weight, **kwargs)
