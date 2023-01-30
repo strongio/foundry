@@ -48,19 +48,6 @@ df_train
 
 
 <div>
-<style scoped>
-    .dataframe tbody tr th:only-of-type {
-        vertical-align: middle;
-    }
-
-    .dataframe tbody tr th {
-        vertical-align: top;
-    }
-
-    .dataframe thead th {
-        text-align: right;
-    }
-</style>
 <table border="1" class="dataframe">
   <thead>
     <tr style="text-align: right;">
@@ -232,19 +219,6 @@ df_train_expanded
 
 
 <div>
-<style scoped>
-    .dataframe tbody tr th:only-of-type {
-        vertical-align: middle;
-    }
-
-    .dataframe tbody tr th {
-        vertical-align: top;
-    }
-
-    .dataframe thead th {
-        text-align: right;
-    }
-</style>
 <table border="1" class="dataframe">
   <thead>
     <tr style="text-align: right;">
@@ -457,19 +431,6 @@ df_coefs
 
 
 <div>
-<style scoped>
-    .dataframe tbody tr th:only-of-type {
-        vertical-align: middle;
-    }
-
-    .dataframe tbody tr th {
-        vertical-align: top;
-    }
-
-    .dataframe thead th {
-        text-align: right;
-    }
-</style>
 <table border="1" class="dataframe">
   <thead>
     <tr style="text-align: right;">
@@ -611,4 +572,4 @@ glm_me.fit(
 
 Here we see that how this predictor's impact on click-rates varies due to floor effects. 
 
-As a bonus, we ploted the actual values alongside the predictions, and we can see potential room for improvement in our model: it looks like very high values of this predictor have especially high click-rates, so an extra step in feature-engineering that captures this discontinuity may be warranted.
+As a bonus, we plotted the actual values alongside the predictions, and we can see potential room for improvement in our model: it looks like very high values of this predictor have especially high click-rates, so an extra step in feature-engineering that captures this discontinuity may be warranted.
