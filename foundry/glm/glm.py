@@ -256,7 +256,7 @@ class Glm(BaseEstimator):
 
         if isinstance(self.penalty, (list, tuple)):
             from sklearn.model_selection import GridSearchCV
-            penalties = self.penalty.copy()
+            penalties = list(self.penalty)
             fit_kwargs = kwargs.copy()
             fit_kwargs['estimate_laplace_coefs'] = False
 
@@ -264,12 +264,16 @@ class Glm(BaseEstimator):
             y = self._standardize_y(y=y, sample_weight=sample_weight)
 
             # warm-start:
+            if kwargs.get('verbose', True):
+                print("Initializing warm start...")
             self.set_params(penalty=penalties[len(penalties) // 2])
             self._fit(X=X, y=y, **fit_kwargs)
             self.set_params(_warm_start=self.module_.state_dict())
             fit_kwargs['verbose'] = False
 
             # search:
+            if kwargs.get('verbose', True):
+                print("GridSearchCV...")
             gcv = GridSearchCV(
                 estimator=self,
                 param_grid={'penalty': penalties},
@@ -280,6 +284,8 @@ class Glm(BaseEstimator):
 
             # set to best penalty, refit:
             best_penalty = gcv.best_params_['penalty']
+            if kwargs.get('verbose', True):
+                print(f"Fitting with best_penalty={best_penalty}...")
             self.set_params(penalty=best_penalty)
             return self._fit(X=X, y=y, **kwargs)
         else:
@@ -309,7 +315,7 @@ class Glm(BaseEstimator):
             if self._module_ is not None and verbose:
                 warn("Resetting module with reset=True")
             # initialize module:
-            self._init_module(X, y)
+            self._init_module(X, y, verbose=verbose)
 
         # optimizer:
         self.optimizer_ = self._init_optimizer()
@@ -454,7 +460,7 @@ class Glm(BaseEstimator):
             ydict['weight'] = torch.ones(ydict['value'].shape[0])
         else:
             assert (ydict['weight'] >= 0).all()
-        return SliceDict(**ydict)
+        return SliceDict(**{k: to_2d(np.asarray(v)) for k, v in ydict.items()})
 
     def _get_ydict(self, y: ModelMatrix, sample_weight: Optional[np.ndarray]) -> Dict[str, torch.Tensor]:
         ydict = self._standardize_y(y=y, sample_weight=sample_weight)
@@ -489,18 +495,22 @@ class Glm(BaseEstimator):
                           X: ModelMatrix,
                           y: Optional[ModelMatrix],
                           sample_weight: Optional[np.ndarray] = None,
-                          include_y: bool = False) -> Tuple[dict, Optional[dict]]:
+                          include_y: bool = False,
+                          sparse_threshold: Optional[float] = None) -> Tuple[dict, Optional[dict]]:
         """
         :param X: A dataframe/ndarray/tensor, or dictionary of these.
         :param y: An optional dataframe/ndarray/tensor, or dictionary of these.
         :param sample_weight: Optional sample-weights
         :param include_y: If True, then will raise if y is not present; if False, will return None in place of y.
+        :param sparse_threshold: Allows overriding ``self.sparse_threshold``.
         :return: Two dictionaries: one of model-mat kwargs (for prediction) and one of target-related kwargs
          (for evaluation i.e. log-prob).
         """
         _to_kwargs = get_to_kwargs(self.module_)
 
-        Xdict = self._get_xdict(X, sparse_threshold=self.sparse_mm_threshold)
+        if sparse_threshold is None:
+            sparse_threshold = self.sparse_mm_threshold
+        Xdict = self._get_xdict(X, sparse_threshold=sparse_threshold)
 
         if not include_y:
             return Xdict, None
@@ -521,7 +531,7 @@ class Glm(BaseEstimator):
 
         return Xdict, ydict
 
-    def _init_module(self, X: ModelMatrix, y: ModelMatrix):
+    def _init_module(self, X: ModelMatrix, y: ModelMatrix, verbose: bool = False):
         # memorize the col -> dist-param mapping
         self._init_col_mapping(X)
 
@@ -559,6 +569,8 @@ class Glm(BaseEstimator):
             self._module_param_names_[dp] = {k: np.asarray(v) for k, v in nms.items()}
 
         if self._warm_start is not None:
+            if verbose:
+                print("Initializing module with warm-start")
             try:
                 self.module_.load_state_dict(self._warm_start)
             except Exception as e:  # TODO
