@@ -142,7 +142,7 @@ class MarginalEffects:
         if isinstance(marginalize_aggfun, str) and marginalize_aggfun.startswith('downsample'):
             downsample_int = int(marginalize_aggfun.replace('downsample', '').rstrip('_'))
             idx = np.random.choice(X.shape[0], size=downsample_int, replace=False)
-            X = _safe_indexing(X, idx).reset_index(drop=True)
+            X = _safe_indexing(X, idx)
             if y is not None:
                 y = _safe_indexing(y, idx)
             marginalize_aggfun = False
