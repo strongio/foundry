@@ -277,7 +277,9 @@ class MarginalEffects:
              include_actuals: Optional[bool] = None) -> 'ggplot':
 
         try:
-            from plotnine import ggplot, aes, geom_line, geom_hline, facet_wrap, theme, theme_bw, geom_point, ylab
+            from plotnine import (
+                ggplot, aes, geom_line, geom_hline, facet_wrap, theme, theme_bw, geom_point, ylab, geom_col
+            )
         except ImportError as e:
             raise RuntimeError("plotting requires `plotnine` package") from e
         if isinstance(facets, str):
@@ -339,11 +341,15 @@ class MarginalEffects:
 
         plot = (
                 ggplot(data, aes(**aes_kwargs)) +
-                geom_line() +
                 geom_hline(yintercept=0) +
                 theme_bw() +
                 theme(figure_size=(8, 6), subplots_adjust={'wspace': 0.10})
         )
+        if pd.api.types.is_categorical_dtype(data[x.replace('_binned', '')]):
+            plot += geom_col()
+        else:
+            plot += geom_line()
+
         if include_actuals is None:
             include_actuals = 'actual' in self._dataframe.columns
         if include_actuals:
