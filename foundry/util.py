@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import torch
 from pandas.core.dtypes.cast import find_common_type
+from scipy.sparse import coo_matrix
 from sklearn.base import BaseEstimator, TransformerMixin
 
 ArrayType = Union[np.ndarray, torch.Tensor]
@@ -28,8 +29,37 @@ def is_array(x) -> bool:
 def get_df_density(x: pd.DataFrame) -> float:
     densities = pd.Series(np.ones(x.shape[1]), index=x.columns)
     sparse_cols = x.columns[x.apply(pd.api.types.is_sparse).astype('bool').values]
-    densities[sparse_cols] = x[sparse_cols].apply(lambda x: x.sparse.density)
+    if len(sparse_cols):
+        densities[sparse_cols] = x[sparse_cols].apply(lambda x: x.sparse.density)
     return densities.mean()
+
+
+def dataframe_to_coo(x: pd.DataFrame) -> coo_matrix:
+    sparse_cols = x.columns[x.apply(pd.api.types.is_sparse).astype('bool').values]
+    dense_cols = x.columns[~x.columns.isin(sparse_cols)]
+    sparse_dtypes = x[sparse_cols].dtypes
+
+    # get fill-value:
+    _fill_values = [dtype.fill_value for dtype in sparse_dtypes]
+    if len(set(_fill_values)) != 1:
+        raise ValueError(
+            f"sparse columns have different `fill_values` ({_fill_values}) so cannot convert to a single sparse tensor. "
+            f"Use a single fill_value, or pass `sparse_threshold=0`."
+        )
+    fill_value = _fill_values[0]
+
+    # get dtype:
+    common_dtype = find_common_type(
+        [dtype.subtype for dtype in sparse_dtypes] + x[dense_cols].dtypes.tolist()
+    )
+
+    # convert dense cols to sparse:
+    x = x.copy(deep=False)
+    for col in dense_cols:
+        x[col] = x[col].astype(pd.SparseDtype(common_dtype, fill_value))
+
+    # convert to sparse array:
+    return x.sparse.to_coo()
 
 
 def to_tensor(x: Union[np.ndarray, torch.Tensor, pd.DataFrame],
@@ -46,43 +76,16 @@ def to_tensor(x: Union[np.ndarray, torch.Tensor, pd.DataFrame],
     :return: A tensor.
     """
     # need special handling for sparsity:
-    if isinstance(x, pd.DataFrame):
-        sparse_cols = x.columns[x.apply(pd.api.types.is_sparse).astype('bool').values]
-        dense_cols = x.columns[~x.columns.isin(sparse_cols)]
-        if len(sparse_cols):
-            if get_df_density(x) < sparse_threshold:
-                sparse_dtypes = x[sparse_cols].dtypes
-
-                # get fill-value:
-                _fill_values = [dtype.fill_value for dtype in sparse_dtypes]
-                if len(set(_fill_values)) != 1:
-                    raise ValueError(
-                        f"`x` has sparsity < {sparse_threshold}, but sparse columns have different `fill_values` "
-                        f"({_fill_values}) so cannot convert to a single sparse tensor. Use a single fill_value, "
-                        f"or pass `sparse_threshold=0`."
-                    )
-                fill_value = _fill_values[0]
-
-                # get dtype:
-                common_dtype = find_common_type(
-                    [dtype.subtype for dtype in sparse_dtypes] + x[dense_cols].dtypes.tolist()
-                )
-
-                # convert dense cols to sparse:
-                x = x.copy(deep=False)
-                for col in dense_cols:
-                    x[col] = x[col].astype(pd.SparseDtype(common_dtype, fill_value))
-
-                # convert to sparse tensor:
-                coo = x.sparse.to_coo()
-                sparse_tensor = torch.sparse_coo_tensor(
-                    torch.as_tensor(np.vstack([coo.row, coo.col])),
-                    torch.as_tensor(coo.data, **kwargs),
-                    torch.Size(coo.shape),
-                    device=kwargs.get('device', 'cpu')
-                )
-                # https://github.com/pytorch/pytorch/issues/16187#issuecomment-457791600
-                return sparse_tensor.coalesce()
+    if sparse_threshold and isinstance(x, pd.DataFrame) and get_df_density(x) < sparse_threshold:
+        coo = dataframe_to_coo(x)
+        sparse_tensor = torch.sparse_coo_tensor(
+            torch.as_tensor(np.vstack([coo.row, coo.col])),
+            torch.as_tensor(coo.data, **kwargs),
+            torch.Size(coo.shape),
+            device=kwargs.get('device', 'cpu')
+        )
+        # https://github.com/pytorch/pytorch/issues/16187#issuecomment-457791600
+        return sparse_tensor.coalesce()
 
     # otherwise, handling is simple.
     if not isinstance(x, torch.Tensor):
