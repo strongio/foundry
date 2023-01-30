@@ -143,12 +143,18 @@ class SliceDict(dict):
     def __setitem__(self, key: str, value: ArrayType):
         if hasattr(value, 'shape'):
             val_len = value.shape[0]
-            if not len(self):
+            try:
+                current_length = self._len
+            except AttributeError:
+                current_length = None  # special handling: unserializing
+            if not current_length:
                 self._len = val_len
             elif len(self) != val_len:
                 raise ValueError(f"value must have .shape[0] of {len(self):,}, got {val_len:,}")
+
             if not isinstance(key, str):
                 raise TypeError("Key must be str, not {}.".format(type(key)))
+
         elif hasattr(value, '__len__'):
             raise ValueError(
                 f"Values inserted into `{type(self).__name__}` must be arrays (i.e. have a `shape`) or must be "
