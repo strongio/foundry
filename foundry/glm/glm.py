@@ -105,13 +105,6 @@ family_names = {
             'scale': transforms.ExpTransform()
         }
     ),
-    'gamma': FamilyArgs(
-        torch.distributions.Gamma,
-        {
-            'rate': transforms.ExpTransform(),
-            'concentration': transforms.ExpTransform()
-        }
-    ),
     'ceiling_weibull': FamilyArgs(
         CeilingWeibull,
         {
@@ -583,20 +576,6 @@ class Glm(BaseEstimator):
                 self.module_.load_state_dict(self._warm_start)
             except Exception as e:  # TODO
                 warn(f"Unable to load warm start: {str(e)}")
-
-        # elif type(self).module_factory == Glm.module_factory:
-        #     lp_dict = self._get_ydict(y, sample_weight=None)  # TODO
-        #     pars_to_try = np.random.standard_normal((1000, len(self.module_)))
-        #     pars_to_try = [dict(zip(self.family.params, pars)) for pars in pars_to_try.T]
-        #     lps = [
-        #         self.family.log_prob(self.family(**pars), **lp_dict).sum()
-        #         for pars in pars_to_try
-        #     ]
-        #     with torch.no_grad():
-        #         for pname, pval in pars_to_try[np.argmax(lps)].items():
-        #             if self.module_[pname].bias.shape[0] > 1:
-        #                 warn("Not implemented")
-        #             self.module_[pname].bias[:] = pval
 
     def _init_col_mapping(self, X: ModelMatrix):
         col_mapping = self.col_mapping
