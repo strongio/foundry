@@ -461,7 +461,7 @@ class Glm(BaseEstimator):
             ydict['weight'] = torch.ones(ydict['value'].shape[0])
         else:
             assert (ydict['weight'] >= 0).all()
-        return SliceDict(**{k: to_2d(np.asarray(v)) for k, v in ydict.items()})
+        return SliceDict(**{k: to_2d(np.asarray(v)) if is_array(v) else v for k, v in ydict.items()})
 
     def _get_ydict(self, y: ModelMatrix, sample_weight: Optional[np.ndarray]) -> Dict[str, torch.Tensor]:
         ydict = self._standardize_y(y=y, sample_weight=sample_weight)
