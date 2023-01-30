@@ -119,6 +119,7 @@ class SliceDict(dict):
     """
 
     def __init__(self, **kwargs):
+        kwargs = {k: self._standardize_val(v) for k, v in kwargs.items()}
         lengths = [value.shape[0] for value in kwargs.values() if hasattr(value, 'shape')]
         lengths_set = set(lengths)
         if lengths_set and (len(lengths_set) != 1):
@@ -133,6 +134,10 @@ class SliceDict(dict):
 
         super().__init__(**kwargs)
 
+    @staticmethod
+    def _standardize_val(val):
+        return np.asarray(val) if is_array(val) and not hasattr(val, 'shape') else val
+
     def __len__(self) -> int:
         return self._len
 
@@ -146,6 +151,7 @@ class SliceDict(dict):
         return SliceDict(**{k: (v[sl] if hasattr(v, 'shape') else v) for k, v in self.items()})
 
     def __setitem__(self, key: str, value: ArrayType):
+        value = self._standardize_val(value)
         if hasattr(value, 'shape'):
             val_len = value.shape[0]
             try:
