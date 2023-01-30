@@ -215,7 +215,7 @@ class ToSliceDict(TransformerMixin, BaseEstimator):
             X = X.copy()  # consistent behavior
 
             # if it's already a dict, not much transforming to do, but need to validate
-            keys_ok = set(X).issubset(set(self.mapping)) if extras_ok else (set(X) == set(self.mapping))
+            keys_ok = set(self.mapping).issubset(X) if extras_ok else (set(X) == set(self.mapping))
             if not keys_ok:
                 raise RuntimeError(
                     f"`mapping` from ``ToSliceDict(mapping=)`` is `{self.mapping}`, but ``X.keys()`` is `{set(X)}`"
