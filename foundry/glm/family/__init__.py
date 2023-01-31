@@ -1,2 +1,2 @@
-from .family import Family
-from .survival import CeilingWeibull, SurvivalFamily
+from .family import Family, FamilyArgs
+from .survival import SurvivalFamily

@@ -118,3 +118,6 @@ dmypy.json
 
 # misc
 **/.DS_Store
+
+# use jupytext instead of plain jupyter
+*.ipynb

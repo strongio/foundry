@@ -1,10 +1,19 @@
+import pickle
+
 import pandas as pd
 import pytest
 import torch
 from pandas.core.arrays import SparseArray
 
-from foundry.util import to_tensor, to_2d
+from foundry.util import to_tensor, to_2d, SliceDict
 from tests.conftest import assert_tensors_equal
+
+
+def test_slice_dict_serialize():
+    orig = SliceDict(**{'test': torch.as_tensor([2, 3])})
+    unserialized = pickle.loads(pickle.dumps(orig))
+    assert set(orig) == set(unserialized)
+    assert_tensors_equal(orig['test'], unserialized['test'])
 
 
 @pytest.mark.parametrize(

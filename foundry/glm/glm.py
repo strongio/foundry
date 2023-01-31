@@ -1,5 +1,4 @@
 import os
-
 from time import sleep
 from typing import Union, Sequence, Optional, Callable, Tuple, Dict
 from warnings import warn
@@ -14,24 +13,109 @@ from torch.distributions import transforms
 
 from sklearn.base import BaseEstimator
 from sklearn.preprocessing import LabelEncoder
+from sklearn.exceptions import NotFittedError
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from tqdm import tqdm
 
+from foundry.glm.distributions import (
+    NegativeBinomial,
+    Multinomial,
+    Exponential,
+    Weibull,
+    CeilingWeibull
+)
+from foundry.glm.family import Family, SurvivalFamily, FamilyArgs
+from foundry.glm.util import NoWeightModule, Stopping, SigmoidTransformForClassification, SoftmaxKp1
+
 from foundry.covariance import Covariance
 from foundry.hessian import hessian
 from foundry.penalty import L2
-
-from .family import Family, CeilingWeibull
-from .family.survival import SurvivalFamily
-from .util import NoWeightModule, Stopping, SigmoidTransformForClassification, Multinomial, SoftmaxKp1
-
 from foundry.util import (
-    FitFailedException, is_invalid, get_to_kwargs, to_tensor, to_2d, is_array, ModelMatrix, ToSliceDict
+    FitFailedException,
+    is_invalid,
+    get_to_kwargs,
+    to_tensor,
+    to_1d,
+    to_2d,
+    is_array,
+    ModelMatrix,
+    ToSliceDict,
+    SliceDict
 )
-from sklearn.exceptions import NotFittedError
 
-N_FIT_RETRIES = int(os.getenv('GLM_N_FIT_RETRIES', 10))
+N_FIT_RETRIES = int(os.getenv('FOUNDRY_N_FIT_RETRIES', 10))
+
+family_names = {
+    'bernoulli': FamilyArgs(
+        distributions.Bernoulli,
+        {'probs': SigmoidTransformForClassification()},
+    ),
+    'binomial': FamilyArgs(
+        distributions.Binomial,
+        {'probs': transforms.SigmoidTransform()},
+        from_y=['total_count']
+    ),
+    'categorical': FamilyArgs(
+        distributions.Categorical,
+        {'probs': SoftmaxKp1()}
+    ),
+    'multinomial': FamilyArgs(
+        Multinomial,
+        {'probs': SoftmaxKp1()},
+        from_y=['total_count']
+    ),
+    'poisson': FamilyArgs(
+        distributions.Poisson,
+        {'rate': transforms.ExpTransform()}
+    ),
+    'negative_binomial': FamilyArgs(
+        NegativeBinomial,
+        {'loc': transforms.ExpTransform(), 'dispersion': transforms.ExpTransform()},
+    ),
+    'exponential': FamilyArgs(
+        Exponential,
+        {'rate': transforms.ExpTransform(), }
+    ),
+    'weibull': FamilyArgs(
+        Weibull,
+        {
+            'scale': transforms.ExpTransform(),
+            'concentration': transforms.ExpTransform()
+        }
+    ),
+    'normal': FamilyArgs(
+        torch.distributions.Normal,
+        {
+            'loc': transforms.identity_transform,
+            'scale': transforms.ExpTransform()
+        }
+    ),
+    'multivariate_normal': FamilyArgs(
+        torch.distributions.MultivariateNormal,
+        {
+            'loc': transforms.identity_transform,
+            'covariance_matrix': Covariance()
+        }
+    ),
+    'lognormal': FamilyArgs(
+        torch.distributions.LogNormal,
+        {
+            'loc': transforms.identity_transform,
+            'scale': transforms.ExpTransform()
+        }
+    ),
+    'ceiling_weibull': FamilyArgs(
+        CeilingWeibull,
+        {
+            'scale': transforms.ExpTransform(),
+            'concentration': transforms.ExpTransform(),
+            'ceiling': transforms.SigmoidTransform()
+        }
+    )
+}
+family_names['gaussian'] = family_names['normal']
+family_names['mvnorm'] = family_names['multivariate_normal']
 
 
 class Glm(BaseEstimator):
@@ -39,10 +123,12 @@ class Glm(BaseEstimator):
     :param family: A family name; you can see available names with ``Glm.family_names``. (Advanced: you can also pass
      the :class:`foundry.glm.family.Family` instead of a name). Some names can be prefixed with ``survival_`` for
      support for censored data.
-    :param penalty: A multiplier for L2 penalty on coefficients. Can be a single value, or a dictionary of these to
-     support different penalties per distribution-parameter. Values can either be floats, or can be functions that take
-     a ``torch.nn.Module`` as the first argument and that module's param-names as second argument, and returns a scalar
-     penalty that will be applied to the log-prob.
+    :param penalty: Specify a penalty on coefficients. Can be a single value, or a dictionary of these to support
+     different penalties per distribution-parameter. Values can either be floats, which will be interpreted as L2
+     penalty magnitudes, or can be functions that take a ``torch.nn.Module`` as the first argument and that module's
+     param-names as second argument, and returns a scalar penalty that will be applied to the log-prob. Finally,
+     ``penalty`` can be a list/tuple of any of the above, in which case ``GridSearchCV`` will be performed to find the
+     best penalty.
     :param col_mapping: Many distributions have multiple parameters: for example the normal distribution has a
      location and scale parameter. If a single dataframe/matrix is passed to  :class:`foundry.glm.Glm.fit`, the default
      behavior is to use this to predict the *first* parameter (e.g. loc) while other parameters (e.g. scale) have no
@@ -55,81 +141,20 @@ class Glm(BaseEstimator):
     :param sparse_mm_threshold: Density threshold for creating a sparse model-matrix. If X has density less than this,
      the model-matrix will be sparse; otherwise it will be dense. Default .05.
     """
-    family_names = {
-        'bernoulli': (
-            distributions.Bernoulli,
-            {'probs': SigmoidTransformForClassification()},
-        ),
-        'binomial': (
-            distributions.Binomial,
-            {'probs': transforms.SigmoidTransform()},
-        ),
-        'categorical': (
-            distributions.Categorical,
-            {'probs': SoftmaxKp1()}
-        ),
-        'multinomial': (
-            Multinomial,
-            {'probs': SoftmaxKp1()}
-        ),
-        'poisson': (
-            distributions.Poisson,
-            {'rate': transforms.ExpTransform()}
-        ),
-        'negative_binomial': (
-            distributions.NegativeBinomial,
-            {'probs': transforms.SigmoidTransform(), 'total_count': transforms.ExpTransform()},
-            False
-        ),
-        'exponential': (
-            torch.distributions.Exponential,
-            {
-                'rate': transforms.ExpTransform(),
-            }
-        ),
-        'weibull': (
-            torch.distributions.Weibull,
-            {
-                'scale': transforms.ExpTransform(),
-                'concentration': transforms.ExpTransform()
-            }
-        ),
-        'normal': (
-            torch.distributions.Normal,
-            {
-                'loc': transforms.identity_transform,
-                'scale': transforms.ExpTransform()
-            }
-        ),
-        'multivariate_normal': (
-            torch.distributions.MultivariateNormal,
-            {
-                'loc': transforms.identity_transform,
-                'covariance_matrix': Covariance()
-            }
-        ),
-        'ceiling_weibull': (
-            CeilingWeibull,
-            {
-                'scale': transforms.ExpTransform(),
-                'concentration': transforms.ExpTransform(),
-                'ceiling': transforms.SigmoidTransform()
-            }
-        )
-    }
-    family_names['gaussian'] = family_names['normal']
-    family_names['mvnorm'] = family_names['multivariate_normal']
+    family_names = family_names
 
     def __init__(self,
                  family: Union[str, Family],
                  penalty: Union[float, Sequence[float], Dict[str, float]] = 0.,
                  col_mapping: Union[list, dict, None] = None,
-                 sparse_mm_threshold: float = .05):
+                 sparse_mm_threshold: float = .01,
+                 _warm_start: Optional[dict] = None):
 
         self.family = family
         self.penalty = penalty
         self.col_mapping = col_mapping
         self.sparse_mm_threshold = sparse_mm_threshold
+        self._warm_start = _warm_start
 
         # set in _init_module:
         self._module_ = None
@@ -154,51 +179,6 @@ class Glm(BaseEstimator):
     @module_.setter
     def module_(self, value: torch.nn.ModuleDict):
         self._module_ = value
-
-    def fit(self,
-            X: ModelMatrix,
-            y: ModelMatrix,
-            sample_weight: Optional[np.ndarray] = None,
-            groups: Optional[np.ndarray] = None,
-            **kwargs) -> 'Glm':
-        """
-        :param X: A array/dataframe of predictors, or a dictionary of these. If a dict, then keys should correspond to
-         ``self.family.params``.
-        :param y: An array of targets. This can instead be a dictionary, with the target-value in the "value" entry,
-         and additional auxiliary information (e.g. sample-weights, upper/lower censoring for survival modeling) in
-         other entries.
-        :param sample_weight: The weight for each row. If performing cross-validation, this argument should not be used,
-         as sklearn does not support it; instead, pass a :class:`foundry.util.SliceDict` for the ``y`` argument, with a
-         'sample_weight' entry.
-        :param groups: todo
-        :param reset: If calling ``fit()`` more than once, should the module/weights be reinitialized. Default True.
-        :param callbacks: A list of callbacks: functions that take the ``Glm`` instance as a first argument and the
-         train-loss as a second argument.
-        :param stopping: Controls stopping based on converging loss/parameters. This argument is passed to
-         :class:`foundry.glm.util.Stopping` (e.g. ``(.01,)`` would use abstol of .01).
-        :param max_iter: The max. number of iterations before stopping training regardless of convergence. Default 200.
-        :param max_loss: If training stops and loss is higher than this, a class:`foundry.util.FitFailedException` will
-         be raised and fitting will be retried with a different set of inits.
-        :param verbose: Whether to allow print statements and a progress bar during training. Default True.
-        :param estimate_laplace_coefs: If true, then after fitting, the hessian of the optimized parameters will be
-         estimated; this can then be used for confidence-intervals and statistical inference (see ``coef_dataframe_``).
-         Can set to False if you want to save time and skip this step.
-        :return: This ``Glm`` instance.
-        """
-        self.family = self._init_family(self.family)
-
-        if self.family.supports_predict_proba:
-            # sklearn uses `hasattr` in some cases to check for `predict_proba`, so can't just
-            # have it error out for some distributions -- need to add it dynamically.
-            # noinspection PyAttributeOutsideInit
-            self.predict_proba = self._predict_proba
-
-        if isinstance(self.penalty, (tuple, list)):
-            raise NotImplementedError  # TODO
-        else:
-            if groups is not None:
-                warn("`groups` argument will be ignored because self.penalty is a single value not a sequence.")
-            return self._fit(X=X, y=y, sample_weight=sample_weight, **kwargs)
 
     def _predict_proba(self,
                        X: ModelMatrix,
@@ -229,14 +209,88 @@ class Glm(BaseEstimator):
 
         return probs
 
-    def _init_family(self, family: Union[Family, str]) -> Family:
+    def _init_family(self, family: Union[Family, str], y: Optional[dict] = None) -> Family:
+        """ if family is a string, turns family to a Family. else return unchanged. """
         if isinstance(family, str):
-            if family.startswith('survival'):
-                family = family.replace('survival', '').lstrip('_')
-                return SurvivalFamily(*self.family_names[family])
-            else:
-                return Family(*self.family_names[family])
+            family = family_from_string(family, y=y)
         return family
+
+    def fit(self,
+            X: ModelMatrix,
+            y: ModelMatrix,
+            sample_weight: Optional[np.ndarray] = None,
+            cv_kwargs: Optional[dict] = None,
+            **kwargs) -> 'Glm':
+        """
+        :param X: A array/dataframe of predictors, or a dictionary of these. If a dict, then keys should correspond to
+         ``self.family.params``.
+        :param y: An array of targets. This can instead be a dictionary, with the target-value in the "value" entry,
+         and additional auxiliary information (e.g. sample-weights, upper/lower censoring for survival modeling) in
+         other entries.
+        :param sample_weight: The weight for each row. If performing cross-validation, this argument should not be used,
+         as sklearn does not support it; instead, pass a :class:`foundry.util.SliceDict` for the ``y`` argument, with a
+         'sample_weight' entry.
+        :param cv_kwargs: If ``self.penalty`` is a list/tuple, then the optimal penalty will be chosen with
+         ``GridSearchCV``; these are keyword-arguments to that cls.
+        :param reset: If calling ``fit()`` more than once, should the module/weights be reinitialized. Default True.
+        :param callbacks: A list of callbacks: functions that take the ``Glm`` instance as a first argument and the
+         train-loss as a second argument.
+        :param stopping: Controls stopping based on converging loss/parameters. This argument is passed to
+         :class:`foundry.glm.util.Stopping` (e.g. ``(.01,)`` would use abstol of .01).
+        :param max_iter: The max. number of iterations before stopping training regardless of convergence. Default 200.
+        :param max_loss: If training stops and loss is higher than this, a class:`foundry.util.FitFailedException` will
+         be raised and fitting will be retried with a different set of inits.
+        :param verbose: Whether to allow print statements and a progress bar during training. Default True.
+        :param estimate_laplace_coefs: If true, then after fitting, the hessian of the optimized parameters will be
+         estimated; this can then be used for confidence-intervals and statistical inference (see ``coef_dataframe_``).
+         Can set to False if you want to save time and skip this step.
+        :return: This ``Glm`` instance.
+        """
+        self.family = self._init_family(self.family, y=y)
+
+        if self.family.supports_predict_proba:
+            # sklearn uses `hasattr` in some cases to check for `predict_proba`, so can't just
+            # have it error out for some distributions -- need to add it dynamically.
+            # noinspection PyAttributeOutsideInit
+            self.predict_proba = self._predict_proba
+
+        if isinstance(self.penalty, (list, tuple)):
+            from sklearn.model_selection import GridSearchCV
+            penalties = list(self.penalty)
+            fit_kwargs = kwargs.copy()
+            fit_kwargs['estimate_laplace_coefs'] = False
+
+            # move sample weight to y:
+            y = self._standardize_y(y=y, sample_weight=sample_weight)
+
+            # warm-start:
+            if kwargs.get('verbose', True):
+                print("Initializing warm start...")
+            self.set_params(penalty=penalties[len(penalties) // 2])
+            self._fit(X=X, y=y, **fit_kwargs)
+            self.set_params(_warm_start=self.module_.state_dict())
+            self.module_ = None
+            fit_kwargs['verbose'] = False
+
+            # search:
+            if kwargs.get('verbose', True):
+                print("GridSearchCV...")
+            gcv = GridSearchCV(
+                estimator=self,
+                param_grid={'penalty': penalties},
+                refit=False,
+                **cv_kwargs
+            )
+            gcv.fit(X=X, y=y, **fit_kwargs)
+
+            # set to best penalty, refit:
+            best_penalty = gcv.best_params_['penalty']
+            if kwargs.get('verbose', True):
+                print(f"Fitting with best_penalty={best_penalty}...")
+            self.set_params(penalty=best_penalty, _warm_start=None)
+            return self._fit(X=X, y=y, **kwargs)
+        else:
+            return self._fit(X=X, y=y, sample_weight=sample_weight, **kwargs)
 
     @retry(retry=retry_if_exception_type(FitFailedException), reraise=True, stop=stop_after_attempt(N_FIT_RETRIES + 1))
     def _fit(self,
@@ -247,7 +301,7 @@ class Glm(BaseEstimator):
              callbacks: Sequence[Callable] = (),
              stopping: Union['Stopping', tuple, dict] = (.001,),
              max_iter: int = 200,
-             max_loss: float = 10.,
+             max_loss: float = float('inf'),
              verbose: bool = True,
              estimate_laplace_coefs: bool = True) -> 'Glm':
 
@@ -262,7 +316,7 @@ class Glm(BaseEstimator):
             if self._module_ is not None and verbose:
                 warn("Resetting module with reset=True")
             # initialize module:
-            self._init_module(X, y)
+            self._init_module(X, y, verbose=verbose)
 
         # optimizer:
         self.optimizer_ = self._init_optimizer()
@@ -284,9 +338,9 @@ class Glm(BaseEstimator):
         if verbose:
             prog = self._init_pb()
 
-        # 'closure' for torch.optimizer.Optimizer.step method:
         epoch = 0
 
+        # 'closure' for torch.optimizer.Optimizer.step method:
         def closure():
             self.optimizer_.zero_grad()
             loss = -self.get_log_prob(x_dict, lp_dict)
@@ -323,7 +377,7 @@ class Glm(BaseEstimator):
 
         if train_loss > max_loss:
             self._fit_failed += 1
-            raise FitFailedException(f"train_loss ({train_loss}) too high")
+            raise FitFailedException(f"train_loss ({train_loss}) too high, consider increasing max_loss ({max_loss})")
 
         self._fit_failed = 0
 
@@ -345,7 +399,10 @@ class Glm(BaseEstimator):
         """
         Get the penalized log prob, applying weights as needed.
         """
-        log_probs = self.family.log_prob(self.family(**self._get_family_kwargs(**x_dict)), **lp_dict)
+        log_probs = self.family.log_prob(
+            self.family(**self._get_family_kwargs(**x_dict)),  # distribution(ilink(X \theta))
+            **lp_dict
+        )
         penalty = self._get_penalty() if include_penalty else 0.
         log_prob = log_probs.sum() - penalty
         if mean:
@@ -386,14 +443,13 @@ class Glm(BaseEstimator):
 
         return Xdict
 
-    def _get_ydict(self, y: ModelMatrix, sample_weight: Optional[np.ndarray]) -> Dict[str, torch.Tensor]:
+    @staticmethod
+    def _standardize_y(y: ModelMatrix, sample_weight: Optional[np.ndarray]) -> SliceDict:
         if isinstance(y, dict):
             assert 'value' in y
             ydict = y.copy()
         else:
             ydict = {'value': y}
-
-        y_len = ydict['value'].shape[0]
 
         if 'weight' in ydict:
             if sample_weight is not None:
@@ -402,29 +458,36 @@ class Glm(BaseEstimator):
             ydict['weight'] = sample_weight
 
         if ydict.get('weight', None) is None:
-            ydict['weight'] = torch.ones(y_len)
+            ydict['weight'] = torch.ones(ydict['value'].shape[0])
         else:
             assert (ydict['weight'] >= 0).all()
+        return SliceDict(**{k: to_2d(np.asarray(v)) if is_array(v) else v for k, v in ydict.items()})
+
+    def _get_ydict(self, y: ModelMatrix, sample_weight: Optional[np.ndarray]) -> Dict[str, torch.Tensor]:
+        ydict = self._standardize_y(y=y, sample_weight=sample_weight)
 
         _to_kwargs = get_to_kwargs(self.module_)
 
         for k in list(ydict):
-            if not hasattr(ydict[k], '__iter__'):
-                # wait until we have a use-case
-                raise NotImplementedError(
-                    f"Unclear how to handle {k}, please report this error to the package maintainer"
-                )
-
             # special handling for classification:
             if k == 'value' and self.label_encoder_ is not None:
-                ydict['value'] = self.label_encoder_.transform(ydict['value'])
+                ydict['value'] = self.label_encoder_.transform(to_1d(ydict['value']))
                 ydict['value'] = to_tensor(ydict['value'], **_to_kwargs)
                 continue
+
+            if not hasattr(ydict[k], '__iter__'):
+                if isinstance(ydict[k], (int, float)):
+                    continue  # pass as-is
+                else:
+                    # wait until we have a use-case
+                    raise NotImplementedError(
+                        f"Unclear how to handle {k}, please report this error to the package maintainer"
+                    )
 
             # standard handling:
             ydict[k] = to_2d(to_tensor(ydict[k], **_to_kwargs))
             # note: no `is_invalid` check, some families might support missing values or infs
-            if ydict[k].shape[0] != y_len:
+            if ydict[k].shape[0] != ydict['value'].shape[0]:
                 raise ValueError(f"{k}.shape[0] does not match y.shape[0]")
 
         return ydict
@@ -433,18 +496,22 @@ class Glm(BaseEstimator):
                           X: ModelMatrix,
                           y: Optional[ModelMatrix],
                           sample_weight: Optional[np.ndarray] = None,
-                          include_y: bool = False) -> Tuple[dict, Optional[dict]]:
+                          include_y: bool = False,
+                          sparse_threshold: Optional[float] = None) -> Tuple[dict, Optional[dict]]:
         """
         :param X: A dataframe/ndarray/tensor, or dictionary of these.
         :param y: An optional dataframe/ndarray/tensor, or dictionary of these.
         :param sample_weight: Optional sample-weights
         :param include_y: If True, then will raise if y is not present; if False, will return None in place of y.
+        :param sparse_threshold: Allows overriding ``self.sparse_threshold``.
         :return: Two dictionaries: one of model-mat kwargs (for prediction) and one of target-related kwargs
          (for evaluation i.e. log-prob).
         """
         _to_kwargs = get_to_kwargs(self.module_)
 
-        Xdict = self._get_xdict(X, sparse_threshold=self.sparse_mm_threshold)
+        if sparse_threshold is None:
+            sparse_threshold = self.sparse_mm_threshold
+        Xdict = self._get_xdict(X, sparse_threshold=sparse_threshold)
 
         if not include_y:
             return Xdict, None
@@ -457,28 +524,35 @@ class Glm(BaseEstimator):
         if Xdict and list(Xdict.values())[0].shape[0] != ydict['value'].shape[0]:
             raise ValueError("Expected X.shape[0] to match y.shape[0]")
 
+        for key in self.family.from_y:
+            if key in ydict:
+                if key in Xdict:
+                    warn(f"'{key}' in both X and y, ignoring y")
+                Xdict[key] = ydict.pop(key)
+
         return Xdict, ydict
 
-    def _init_module(self, X: ModelMatrix, y: ModelMatrix) -> torch.nn.ModuleDict:
+    def _init_module(self, X: ModelMatrix, y: ModelMatrix, verbose: bool = False):
         # memorize the col -> dist-param mapping
         self._init_col_mapping(X)
 
         # standardize X and y:
         X = self.to_slice_dict_.transform(X)
-        if isinstance(y, dict):
-            y = y['value']
-        y = to_2d(np.asanyarray(y))
+        if not isinstance(y, dict):
+            y = {'value': y}
+        y_arr = y['value']
+        y_arr = to_2d(np.asanyarray(y_arr))
 
         # if classification, handle label encoding:
         self.label_encoder_ = None
         if self.family.supports_predict_proba and not self.family.has_total_count:
-            if y.shape[-1] != 1:
+            if y_arr.shape[-1] != 1:
                 raise ValueError(
                     f"GLM w/family {self.family} expects a 1D ``y`` whose values are the class-labels. However,"
-                    f"y.shape is {y.shape}."
+                    f"y.shape is {y_arr.shape}."
                 )
             self.label_encoder_ = LabelEncoder()
-            self.label_encoder_.fit(y)
+            self.label_encoder_.fit(to_1d(y_arr))
             assert len(self.label_encoder_.classes_) > 1
 
         # create modules that predict params:
@@ -486,7 +560,7 @@ class Glm(BaseEstimator):
         self.module_ = torch.nn.ModuleDict()
         for dp in self.family.params:
             Xp = X.get(dp, None)
-            module_num_outputs = self._get_module_num_outputs(y, dp)
+            module_num_outputs = self._get_module_num_outputs(y_arr, dp)
             if Xp is None or not Xp.shape[1]:
                 # always use the base approach when no input features:
                 module, nms = Glm.module_factory(X=None, output_dim=module_num_outputs)
@@ -494,6 +568,14 @@ class Glm(BaseEstimator):
                 module, nms = self.module_factory(X=Xp, output_dim=module_num_outputs)
             self.module_[dp] = module
             self._module_param_names_[dp] = {k: np.asarray(v) for k, v in nms.items()}
+
+        if self._warm_start is not None:
+            if verbose:
+                print("Initializing module with warm-start")
+            try:
+                self.module_.load_state_dict(self._warm_start)
+            except Exception as e:  # TODO
+                warn(f"Unable to load warm start: {str(e)}")
 
     def _init_col_mapping(self, X: ModelMatrix):
         col_mapping = self.col_mapping
@@ -576,7 +658,7 @@ class Glm(BaseEstimator):
             return tqdm(total=max_eval)
         return None
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def score(self, X: ModelMatrix, y: ModelMatrix, sample_weight: Optional[np.ndarray] = None) -> float:
         """
         Uses log_prob (without penalty) for scoring.
@@ -584,7 +666,7 @@ class Glm(BaseEstimator):
         x_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
         return self.get_log_prob(x_dict, lp_dict, mean=True, include_penalty=False).item()
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def predict(self,
                 X: ModelMatrix,
                 type: Optional[str] = None,
@@ -609,7 +691,7 @@ class Glm(BaseEstimator):
             if self.label_encoder_ is not None:
                 probs = self.predict_proba(X, kwargs_as_is=kwargs_as_is, **kwargs)
                 class_idxs = probs.argmax(axis=1)
-                return self.label_encoder_.inverse_transform(class_idxs)
+                return self.label_encoder_.inverse_transform(to_1d(class_idxs))
             else:
                 type = 'mean'
 
@@ -666,7 +748,7 @@ class Glm(BaseEstimator):
         if self._coef_mvnorm_ is None:
             raise RuntimeError("Must call ``estimate_laplace_coefs()`` first.")
         out = []
-        with torch.no_grad():
+        with torch.inference_mode():
             ses = self._coef_mvnorm_.covariance_matrix.diag().sqrt()
             for name, estimate, se in zip(self._laplace_coefs_names_, self._coef_mvnorm_.mean, ses):
                 estimate = estimate.item()
@@ -680,31 +762,17 @@ class Glm(BaseEstimator):
         self._laplace_coefs_names_, means, hess = self._estimate_laplace_coefs(X=X, y=y, sample_weight=sample_weight)
 
         # create mvnorm for laplace approx:
-        with torch.no_grad():
-            fail_msg = ''
+        self.converged_ = False
+        with torch.inference_mode():
             try:
-                cov = torch.inverse(hess)
-            except RuntimeError as e:
-                fail_msg = str(e)
-
-            if not fail_msg:
-                try:
-                    self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
-                        means, covariance_matrix=cov, validate_args=True
-                    )
-                    self.converged_ = True
-                except ValueError as e:
-                    if 'constraint PositiveDefinite' not in str(e):
-                        raise e
-                    fail_msg = str(e)
-
-            if fail_msg:
-                warn(f"Model failed to converge; ``laplace_params`` cannot be estimated."
-                     f"\nhess.diag():\n{hess.diag()}"
-                     f"\nfail msg:\n{fail_msg}")
-                fake_cov = torch.eye(hess.shape[0]) * 1e-10
+                self._coef_mvnorm_ = torch.distributions.MultivariateNormal(
+                    means, precision_matrix=hess, validate_args=True
+                )
+                self.converged_ = True
+            except (RuntimeError, ValueError) as e:
+                warn(f"Second order estimation of parameter distribution failed.\n{str(e)}")
+                fake_cov = torch.diag(torch.diag(hess).pow(-1).clip(min=1E-5))
                 self._coef_mvnorm_ = torch.distributions.MultivariateNormal(means, covariance_matrix=fake_cov)
-                self.converged_ = False
 
     def _estimate_laplace_coefs(self,
                                 X: ModelMatrix,
@@ -726,3 +794,21 @@ class Glm(BaseEstimator):
         hess = hessian(output=-log_prob.squeeze(), inputs=all_params, allow_unused=True, progress=False)
 
         return all_param_names, means, hess
+
+
+def family_from_string(family: str, y: Optional[dict] = None) -> Family:
+    # survival analysis can be indicated by passing a target that involves censoring
+    is_survival = isinstance(y, dict) and any('cens' in k for k in y)
+    if family.startswith('survival'):
+        family = family.replace('survival', '').lstrip('_')
+        warn(
+            "Prefixing family-alias with 'survival' is deprecated; censoring in ``y`` is sufficient.",
+            DeprecationWarning
+        )
+        if y is not None:
+            assert is_survival
+
+    if is_survival:
+        return SurvivalFamily(**family_names[family].to_dict())
+    else:
+        return Family(**family_names[family].to_dict())

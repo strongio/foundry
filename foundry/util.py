@@ -4,13 +4,12 @@ import numpy as np
 import pandas as pd
 import torch
 from pandas.core.dtypes.cast import find_common_type
+from scipy.sparse import coo_matrix
 from sklearn.base import BaseEstimator, TransformerMixin
 
 ArrayType = Union[np.ndarray, torch.Tensor]
 ModelMatrix = Union[np.ndarray, pd.DataFrame, Dict[str, Union[np.ndarray, pd.DataFrame]]]
 
-
-# TODO: unit-tests
 
 def transpose_last_dims(x: torch.Tensor) -> torch.Tensor:
     args = list(range(len(x.shape)))
@@ -27,6 +26,42 @@ def is_array(x) -> bool:
     return hasattr(x, '__array__')
 
 
+def get_df_density(x: pd.DataFrame) -> float:
+    densities = pd.Series(np.ones(x.shape[1]), index=x.columns)
+    sparse_cols = x.columns[x.apply(pd.api.types.is_sparse).astype('bool').values]
+    if len(sparse_cols):
+        densities[sparse_cols] = x[sparse_cols].apply(lambda x: x.sparse.density)
+    return densities.mean()
+
+
+def dataframe_to_coo(x: pd.DataFrame) -> coo_matrix:
+    sparse_cols = x.columns[x.apply(pd.api.types.is_sparse).astype('bool').values]
+    dense_cols = x.columns[~x.columns.isin(sparse_cols)]
+    sparse_dtypes = x[sparse_cols].dtypes
+
+    # get fill-value:
+    _fill_values = [dtype.fill_value for dtype in sparse_dtypes]
+    if len(set(_fill_values)) != 1:
+        raise ValueError(
+            f"sparse columns have different `fill_values` ({_fill_values}) so cannot convert to a single sparse tensor. "
+            f"Use a single fill_value, or pass `sparse_threshold=0`."
+        )
+    fill_value = _fill_values[0]
+
+    # get dtype:
+    common_dtype = find_common_type(
+        [dtype.subtype for dtype in sparse_dtypes] + x[dense_cols].dtypes.tolist()
+    )
+
+    # convert dense cols to sparse:
+    x = x.copy(deep=False)
+    for col in dense_cols:
+        x[col] = x[col].astype(pd.SparseDtype(common_dtype, fill_value))
+
+    # convert to sparse array:
+    return x.sparse.to_coo()
+
+
 def to_tensor(x: Union[np.ndarray, torch.Tensor, pd.DataFrame],
               sparse_threshold: float = 0.,
               **kwargs) -> torch.Tensor:
@@ -41,45 +76,16 @@ def to_tensor(x: Union[np.ndarray, torch.Tensor, pd.DataFrame],
     :return: A tensor.
     """
     # need special handling for sparsity:
-    if isinstance(x, pd.DataFrame):
-        sparse_cols = x.columns[x.apply(pd.api.types.is_sparse).astype('bool').values]
-        dense_cols = x.columns[~x.columns.isin(sparse_cols)]
-        if len(sparse_cols):
-            densities = pd.Series(np.ones(x.shape[1]), index=x.columns)
-            densities[sparse_cols] = x[sparse_cols].apply(lambda x: x.sparse.density)
-            if densities.mean() < sparse_threshold:
-                sparse_dtypes = x[sparse_cols].dtypes
-
-                # get fill-value:
-                _fill_values = [dtype.fill_value for dtype in sparse_dtypes]
-                if len(set(_fill_values)) != 1:
-                    raise ValueError(
-                        f"`x` has sparsity < {sparse_threshold}, but sparse columns have different `fill_values` "
-                        f"({_fill_values}) so cannot convert to a single sparse tensor. Use a single fill_value, "
-                        f"or pass `sparse_threshold=0`."
-                    )
-                fill_value = _fill_values[0]
-
-                # get dtype:
-                common_dtype = find_common_type(
-                    [dtype.subtype for dtype in sparse_dtypes] + x[dense_cols].dtypes.tolist()
-                )
-
-                # convert dense cols to sparse:
-                x = x.copy(deep=False)
-                for col in dense_cols:
-                    x[col] = x[col].astype(pd.SparseDtype(common_dtype, fill_value))
-
-                # convert to sparse tensor:
-                coo = x.sparse.to_coo()
-                sparse_tensor = torch.sparse_coo_tensor(
-                    torch.as_tensor(np.vstack([coo.row, coo.col])),
-                    torch.as_tensor(coo.data, **kwargs),
-                    torch.Size(coo.shape),
-                    device=kwargs.get('device', 'cpu')
-                )
-                # https://github.com/pytorch/pytorch/issues/16187#issuecomment-457791600
-                return sparse_tensor.coalesce()
+    if sparse_threshold and isinstance(x, pd.DataFrame) and get_df_density(x) < sparse_threshold:
+        coo = dataframe_to_coo(x)
+        sparse_tensor = torch.sparse_coo_tensor(
+            torch.as_tensor(np.vstack([coo.row, coo.col])),
+            torch.as_tensor(coo.data, **kwargs),
+            torch.Size(coo.shape),
+            device=kwargs.get('device', 'cpu')
+        )
+        # https://github.com/pytorch/pytorch/issues/16187#issuecomment-457791600
+        return sparse_tensor.coalesce()
 
     # otherwise, handling is simple.
     if not isinstance(x, torch.Tensor):
@@ -99,6 +105,7 @@ def get_to_kwargs(x) -> dict:
 
 
 def is_invalid(x: torch.Tensor, reduce: bool = True) -> bool:
+    """ Checks for NaNs or infs in a tensor. Set reduce=False to return element-wise """
     if reduce:
         return torch.isinf(x).any() or torch.isnan(x).any()
     else:
@@ -115,6 +122,7 @@ class SliceDict(dict):
     """
 
     def __init__(self, **kwargs):
+        kwargs = {k: self._standardize_val(v) for k, v in kwargs.items()}
         lengths = [value.shape[0] for value in kwargs.values() if hasattr(value, 'shape')]
         lengths_set = set(lengths)
         if lengths_set and (len(lengths_set) != 1):
@@ -129,6 +137,10 @@ class SliceDict(dict):
 
         super().__init__(**kwargs)
 
+    @staticmethod
+    def _standardize_val(val):
+        return np.asarray(val) if is_array(val) and not hasattr(val, 'shape') else val
+
     def __len__(self) -> int:
         return self._len
 
@@ -142,14 +154,21 @@ class SliceDict(dict):
         return SliceDict(**{k: (v[sl] if hasattr(v, 'shape') else v) for k, v in self.items()})
 
     def __setitem__(self, key: str, value: ArrayType):
+        value = self._standardize_val(value)
         if hasattr(value, 'shape'):
             val_len = value.shape[0]
-            if not len(self):
+            try:
+                current_length = self._len
+            except AttributeError:
+                current_length = None  # special handling: unserializing
+            if not current_length:
                 self._len = val_len
             elif len(self) != val_len:
                 raise ValueError(f"value must have .shape[0] of {len(self):,}, got {val_len:,}")
+
             if not isinstance(key, str):
                 raise TypeError("Key must be str, not {}.".format(type(key)))
+
         elif hasattr(value, '__len__'):
             raise ValueError(
                 f"Values inserted into `{type(self).__name__}` must be arrays (i.e. have a `shape`) or must be "
@@ -210,7 +229,7 @@ class ToSliceDict(TransformerMixin, BaseEstimator):
             X = X.copy()  # consistent behavior
 
             # if it's already a dict, not much transforming to do, but need to validate
-            keys_ok = set(X).issubset(set(self.mapping)) if extras_ok else (set(X) == set(self.mapping))
+            keys_ok = set(self.mapping).issubset(X) if extras_ok else (set(X) == set(self.mapping))
             if not keys_ok:
                 raise RuntimeError(
                     f"`mapping` from ``ToSliceDict(mapping=)`` is `{self.mapping}`, but ``X.keys()`` is `{set(X)}`"
@@ -334,6 +353,8 @@ def to_2d(arr: ArrayType) -> ArrayType:
     :param arr: Numpy array or tensor.
     :return: 2d of same type
     """
+    # TODO what about pandas? Slicing arr[None, ...] not officially supported.
+
     ndim = len(arr.shape)
     if ndim == 2:
         return arr
@@ -348,3 +369,17 @@ def to_2d(arr: ArrayType) -> ArrayType:
         if len(arr.shape) == 1:
             arr = arr[..., None]
     return arr
+
+
+def log1mexp(x: torch.Tensor) -> torch.Tensor:
+    """
+    Implement a numerically stable ``log(1 - exp(x))``, as described in
+    https://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf
+    """
+    out_dtype = x.dtype if torch.is_tensor(x) and torch.is_floating_point(x) else torch.get_default_dtype()
+    x = torch.as_tensor(x, dtype=torch.double)
+    out = torch.empty_like(x)
+    mask = -x < 0.693
+    out[mask] = torch.log(-torch.expm1(x[mask]))
+    out[~mask] = torch.log1p(-torch.exp(x[~mask]))
+    return out.to(dtype=out_dtype)

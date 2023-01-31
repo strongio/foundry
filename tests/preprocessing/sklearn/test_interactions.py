@@ -1,114 +1,13 @@
 from typing import Union, Type
 from unittest.mock import create_autospec
 
-import numpy as np
 import pandas as pd
 import pytest
 from pandas.core.arrays import SparseArray
-from pandas.testing import assert_frame_equal
-from scipy.sparse import spmatrix, coo_matrix
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import make_column_selector
+from sklearn.exceptions import NotFittedError
 
-from foundry.preprocessing import make_column_selector, InteractionFeatures, DataFrameTransformer, ColumnDropper
-
-
-def make_small_df():
-    return pd.DataFrame({
-        "A": [0., 1., 2., 3.],
-        "B": [0.5, 0.5, 0.5, 0.5],
-        "C": [-1., -2., -3., -4.],
-    })
-
-
-@pytest.mark.parametrize(
-    "kwargs, expected",
-    [
-        pytest.param(
-            {'drop_zero_var': False},
-            make_small_df(),
-            id="no names/pattern"
-        ),
-        pytest.param(
-            {"names": "A", 'drop_zero_var': False},
-            pd.DataFrame({"B": [0.5, 0.5, 0.5, 0.5], "C": [-1., -2., -3., -4.]}),
-            id="drop based on name"
-        ),
-        pytest.param(
-            {"names": ["A", "B"], 'drop_zero_var': False},
-            pd.DataFrame({"C": [-1., -2., -3., -4., ]}),
-            id="drop based on names"
-        ),
-        pytest.param(
-            {"pattern": "[AB]", 'drop_zero_var': False},
-            pd.DataFrame({"C": [-1., -2., -3., -4., ]}),
-            id="drop based on pattern"
-        ),
-        pytest.param(
-            {'drop_zero_var': True},
-            pd.DataFrame({"A": [0., 1., 2., 3., ], "C": [-1., -2., -3., -4.]}),
-            id="drop zero-var columns"
-        ),
-        pytest.param(
-            {'names': 'A', 'drop_zero_var': True},
-            pd.DataFrame({"C": [-1., -2., -3., -4.]}),
-            id="drop zero-var columns and more"
-        ),
-        pytest.param(
-            {"names": "A", "pattern": ".*", 'drop_zero_var': False},
-            ValueError,
-            id="can't pass both name and pattern"
-        ),
-        pytest.param(
-            {"names": "D", 'drop_zero_var': False},
-            RuntimeError,
-            id="can't pass colname that's not in df"
-        ),
-    ]
-)
-def test_column_dropper(kwargs: dict,
-                        expected: Union[pd.DataFrame, Type[Exception]]):
-    small_df = make_small_df()
-    my_drop_transformer = ColumnDropper(**kwargs)
-    if isinstance(expected, pd.DataFrame):
-        test = my_drop_transformer.fit(small_df).transform(small_df)
-        assert_frame_equal(expected, test)
-    else:
-        with pytest.raises(expected):
-            my_drop_transformer.fit(small_df)
-
-
-def test_make_column_selector():
-    small_df = make_small_df()
-    column_selector = make_column_selector("[AB]")
-
-    assert column_selector(small_df) == ["A", "B"]
-    assert "[AB]" in repr(column_selector)
-
-
-class TestDataFrameTransformer:
-    @pytest.mark.parametrize(
-        argnames=['X', 'expected'],
-        argvalues=[
-            # resets index:
-            (pd.DataFrame({'x': [1, 2, 3]}, index=[1, 2, 3]), pd.DataFrame({'x': [1, 2, 3]})),
-            # convert numpy:
-            (np.zeros((3, 2)), pd.DataFrame(np.zeros((3, 2)))),
-            # convert sparse:
-            (
-                    OneHotEncoder(sparse=True).fit_transform([['a'], ['b'], ['c'], ['d']]),
-                    pd.DataFrame(np.eye(4))
-            )
-        ]
-    )
-    def test__convert_single_transform_to_df(self,
-                                             X: Union[np.ndarray, pd.DataFrame, spmatrix],
-                                             expected: pd.DataFrame):
-        result = DataFrameTransformer._convert_single_transform_to_df(X)
-        if isinstance(X, spmatrix):
-            assert hasattr(result, 'sparse')
-            assert result.sparse.density == .25
-            result = result.sparse.to_dense()
-        pd.testing.assert_frame_equal(result, expected)
+from foundry.preprocessing import InteractionFeatures
 
 
 class TestInteractionFeatures:
@@ -123,14 +22,24 @@ class TestInteractionFeatures:
                 id='simple'
             ),
             pytest.param(
+                [('col1', 'col2'), ('col2', 'col1')],
+                [('col1', 'col2')],
+                id='redundant'
+            ),
+            pytest.param(
                 [('col1', 'col50')],
                 RuntimeError,
                 id='not-present',
             ),
             pytest.param(
-                [('col1', lambda x: ['col2', 'col3']), ('col1', 'col4')],
+                [('col1', lambda _: ['col2', 'col3']), ('col1', 'col4')],
                 [('col1', 'col2'), ('col1', 'col3'), ('col1', 'col4')],
                 id='with_callable'
+            ),
+            pytest.param(
+                [('col1', 'col1')],
+                [],
+                id='paired-feature',
             ),
             pytest.param(
                 [('col1', make_column_selector(pattern='unmatched'))],
@@ -144,6 +53,7 @@ class TestInteractionFeatures:
         estimator = InteractionFeatures(interactions=interactions, no_selection_handling='raise')
         if isinstance(expected, list):
             assert estimator.fit(X=X).unrolled_interactions_ == expected
+            assert all(estimator.feature_names_in_ == X.columns)
         else:
             with pytest.raises(expected):
                 estimator.fit(X=X)
@@ -174,6 +84,12 @@ class TestInteractionFeatures:
                 ['col1', 'col2', 'col1:col2'],
                 ['col1', 'col2', 'col1:col2'],
                 id='pre-existing'
+            ),
+            pytest.param(
+                [('col1', 'col2')],
+                ['col1', 'col1:col2', 'col2'],
+                ['col1', 'col2', 'col1:col2'],
+                id='pre-existing2'
             ),
             pytest.param(
                 [('a', 'b')],
@@ -211,6 +127,7 @@ class TestInteractionFeatures:
         instance = create_autospec(InteractionFeatures, instance=True)
         instance.sep = ":"
         instance.unrolled_interactions_ = unrolled_interactions
+        instance.feature_names_in_ = X if isinstance(X, list) else X.columns
 
         if isinstance(X, list):
             X = pd.DataFrame(columns=X)
@@ -222,6 +139,58 @@ class TestInteractionFeatures:
             pd.testing.assert_frame_equal(result, expected)
             if hasattr(X, 'sparse'):
                 assert result['a:b'].sparse.density < 1
+
+            assert all(InteractionFeatures.get_feature_names_out(instance) == expected.columns)
         else:
             with pytest.raises(expected):
                 InteractionFeatures.transform(instance, X=X)
+
+    @pytest.mark.parametrize(
+        argnames=['unrolled_interactions', 'x_cols', 'expected'],
+        argvalues=[
+            pytest.param(
+                [('col1', 'col2')],
+                ['col1', 'col2', 'col3'],
+                ['col1', 'col2', 'col3', 'col1:col2'],
+                id='simple'
+            ),
+            pytest.param(
+                [('col1', 'col2'), ('col1', 'col3'), ('col1', 'col4')],
+                ['col1', 'col2', 'col3', 'col4'],
+                ['col1', 'col2', 'col3', 'col4', 'col1:col2', 'col1:col3', 'col1:col4'],
+                id='simple2'
+            ),
+            pytest.param(
+                [('col1', 'col2')],
+                None,
+                NotFittedError,
+                id='unfitted'
+            ),
+            pytest.param(
+                [('col1', 'col2')],
+                ['col1', 'col2', 'col1:col2'],
+                ['col1', 'col2', 'col1:col2'],
+                id='pre-existing'
+            ),
+            pytest.param(
+                [('col1', 'col2')],
+                ['col1', 'col1:col2', 'col2'],
+                ['col1', 'col2', 'col1:col2'],
+                id='pre-existing2'
+            ),
+        ]
+    )
+    def test_get_feature_names_out(self,
+                                   unrolled_interactions: list,
+                                   x_cols: list,
+                                   expected: Union[list, Type[Exception]]):
+        instance = create_autospec(InteractionFeatures, instance=True)
+        instance.sep = ":"
+        instance.unrolled_interactions_ = unrolled_interactions
+        instance.feature_names_in_ = x_cols
+
+        if isinstance(expected, list):
+            assert InteractionFeatures.get_feature_names_out(instance) == expected
+        else:
+            with pytest.raises(expected):
+                InteractionFeatures.get_feature_names_out(instance)
