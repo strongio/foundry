@@ -6,7 +6,8 @@ import pytest
 import torch
 from torch.distributions import Binomial, Distribution, Weibull, ContinuousBernoulli
 
-from foundry.glm.family.util import subset_distribution, log1mexp
+from foundry.glm.family.util import subset_distribution
+from foundry.util import log1mexp
 from tests.glm.distribution.util import assert_dist_equal
 from tests.conftest import assert_scalars_equal
 

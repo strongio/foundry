@@ -1,4 +1,4 @@
-from typing import Collection, Dict, Optional, Iterable, Tuple
+from typing import Collection, Dict, Iterable, List, Optional, Tuple
 from warnings import warn
 
 import numpy as np
@@ -8,7 +8,10 @@ from sklearn.pipeline import Pipeline
 
 from typing import Callable, Sequence, Union
 
+from sklearn.utils import _safe_indexing
 from tqdm.auto import tqdm
+
+from foundry.util import to_1d
 
 
 class Binned:
@@ -85,7 +88,13 @@ class MarginalEffects:
             raise TypeError("``self.pipeline[0]`` does not have ``_columns``. Is it a ``ColumnTransformer``?")
         if col_transformer.remainder != 'drop':
             raise NotImplementedError("Not currently implemented if ``col_transformer.remainder != 'drop'``")
-        return list(set(sum(col_transformer._columns, [])))
+        feature_names_in = set()
+        for cols in col_transformer._columns:
+            if isinstance(cols, str):
+                cols = [cols]
+            for col in cols:
+                feature_names_in.add(col)
+        return list(feature_names_in)
 
     @property
     def all_column_names_in(self) -> Sequence[str]:
@@ -103,7 +112,7 @@ class MarginalEffects:
                  vary_features: Sequence[Union[str, Binned]],
                  groupby_features: Collection[Union[str, Binned]] = (),
                  vary_features_aggfun: Union[str, dict, Callable] = 'mean',
-                 marginalize_aggfun: Union[str, dict, Callable, None] = 'median',
+                 marginalize_aggfun: Union[str, dict, Callable, None] = 'downsample100000',
                  y_aggfun: Union[str, Callable] = 'mean',
                  **predict_kwargs) -> 'MarginalEffects':
         """
@@ -123,15 +132,22 @@ class MarginalEffects:
          aggregation that will be applied, or 'mid' to use the midpoint of the bin. The latter will be used regardless
          when no actual data exists in that bin. This argument can also be a dictionary with keys being feature-names.
         :param marginalize_aggfun: How to marginalize across features that are not in the vary/groupby. This is a
-         string/callable that will be applied to each feature. Default: median. Can also use a dictionary of these,
-         with keys being feature-names. If set to False/None, will *not* collapse these, but instead call ``predict``
-         for each row then summarize the *predictions* with `y_aggfun`. WARNING: this will be slow for a large dataset,
-         downsampling recommended.
+         string/callable that will be applied to each feature. Can also be 'downsample{int}' or false-y, in which case
+         will *not* collapse these, but instead call ``predict`` for each row then summarize the *predictions* with
+         `y_aggfun`. If 'downsample{int}' then downsampling will be performed before this (slow) procedure.
         :param y_aggfun: The function to use when aggregating predictions (and actuals, if supplied). Only has an
          effect if ``marginalize_aggfun` is False/None.
         :param predict_kwargs: Keyword-arguments to pass to the pipeline's ``predict`` method.
         """
-        X = X.copy(deep=False)
+        if isinstance(marginalize_aggfun, str) and marginalize_aggfun.startswith('downsample'):
+            downsample_int = int(marginalize_aggfun.replace('downsample', '').rstrip('_'))
+            idx = np.random.choice(X.shape[0], size=downsample_int, replace=False)
+            X = _safe_indexing(X, idx)
+            if y is not None:
+                y = _safe_indexing(y, idx)
+            marginalize_aggfun = False
+        else:
+            X = X.copy(deep=False)
 
         # validate/standardize args:
         vary_features = self._standardize_maybe_binned(X, vary_features)
@@ -211,7 +227,7 @@ class MarginalEffects:
         else:
             pred_colnames = set()
             if df_no_vary.shape[0] > 100_000 and not self.quiet:
-                print("Consider setting `marginalize_aggfun` or downsampling data.")
+                print("Consider setting `marginalize_aggfun='downsample100000'`.")
 
             chunks = [df for _, df in df_vary_grid.groupby(list(vary_features), sort=False)]
             if not self.quiet:
@@ -247,6 +263,8 @@ class MarginalEffects:
         })
         return self
 
+    fit = __call__
+
     def to_dataframe(self) -> pd.DataFrame:
         if self._dataframe is None:
             raise RuntimeError("This `MarginalEffects()` needs to be called on a dataset first.")
@@ -259,7 +277,9 @@ class MarginalEffects:
              include_actuals: Optional[bool] = None) -> 'ggplot':
 
         try:
-            from plotnine import ggplot, aes, geom_line, geom_hline, facet_wrap, theme, theme_bw, geom_point
+            from plotnine import (
+                ggplot, aes, geom_line, geom_hline, facet_wrap, theme, theme_bw, geom_point, ylab, geom_col
+            )
         except ImportError as e:
             raise RuntimeError("plotting requires `plotnine` package") from e
         if isinstance(facets, str):
@@ -280,8 +300,10 @@ class MarginalEffects:
         available_default_features = list(self.config['vary_features']) + list(self.config['groupby_features'])
 
         # if x is set, that's not an available default feature:
-        if x and x in available_default_features:
-            available_default_features.remove(x)
+        if x:
+            for colname in [x, x.replace('_binned', '')]:
+                if colname in available_default_features:
+                    available_default_features.remove(colname)
         # if color (or its binned version) is set, that's not an available default feature:
         if color:
             for colname in [color, color.replace('_binned', '')]:
@@ -310,6 +332,8 @@ class MarginalEffects:
             color = available_default_features.pop(0)
         if color:
             aes_kwargs['group'] = aes_kwargs['color'] = color
+        else:
+            aes_kwargs['group'] = '1'
 
         # remaining go to facets:
         if available_default_features:
@@ -321,18 +345,23 @@ class MarginalEffects:
 
         plot = (
                 ggplot(data, aes(**aes_kwargs)) +
-                geom_line() +
                 geom_hline(yintercept=0) +
                 theme_bw() +
                 theme(figure_size=(8, 6), subplots_adjust={'wspace': 0.10})
         )
+        if pd.api.types.is_categorical_dtype(data[x.replace('_binned', '')]):
+            plot += geom_col()
+        else:
+            plot += geom_line()
+
         if include_actuals is None:
             include_actuals = 'actual' in self._dataframe.columns
         if include_actuals:
             if 'actual' in self._dataframe.columns:
                 plot += geom_point(aes(y='actual', size='n'))
+                plot += ylab("predicted (line) & actual (dots)")
             else:
-                raise RuntimeError("`y` was not passed so cannot include_actuals")
+                raise RuntimeError("`y` was not passed so cannot `include_actuals`")
         if facets:
             plot += facet_wrap(facets, scales='free_y', labeller='label_both')
         return plot
@@ -371,20 +400,21 @@ class MarginalEffects:
         # validate output:
         if len(predictions.shape) > 1 and predictions.shape[1] > 1:
             assert len(predictions.shape) == 2
-            if self.predict_method == 'predict_proba':
-                assert predictions.shape[1] == 2
+            if self.predict_method == 'predict_proba' and predictions.shape[1] == 2:
+                # handle common case of 2-class prediction, only plot p(positive-class)
                 predictions = predictions[:, 1]
             elif not isinstance(predictions, pd.DataFrame):
-                raise RuntimeError(
-                    f"the `{self.predict_method}` method of the pipeline returned predictions with shape "
-                    f"{predictions.shape}. Only expect output to be not 1d-like if `predict_proba` was used "
-                    f"or if output is a dataframe."
-                )
+                predictions = pd.DataFrame(predictions)
+                if self.predict_method == 'predict_proba':
+                    predictions.columns = [f'class{i}' for i in range(predictions.shape[1])]
+                else:
+                    predictions.columns = [f'pred{i}' for i in range(predictions.shape[1])]
+
         # handle multi-output:
         if isinstance(predictions, pd.DataFrame):
             predictions = {k: v.values for k, v in predictions.to_dict(orient='series').items()}
         else:
-            predictions = {'predicted': predictions}
+            predictions = {'predicted': to_1d(predictions)}
 
         return predictions
 

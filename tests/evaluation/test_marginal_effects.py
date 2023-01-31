@@ -2,10 +2,12 @@ from typing import Callable
 import pandas as pd
 import numpy as np
 import pytest
-from unittest.mock import patch
+from unittest.mock import create_autospec
 from pandas.testing import assert_series_equal
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
 
-from foundry.evaluation.marginal_effects import Binned, binned, raw
+from foundry.evaluation.marginal_effects import Binned, MarginalEffects, binned, raw
 
 class TestBinned():
     @pytest.mark.parametrize(
@@ -107,3 +109,27 @@ def test_raw():
         raw_callable(test_dataframe),
         test_dataframe[column_name]
     )
+
+
+class TestMarginalEffects:
+
+    x_data: pd.DataFrame = pd.DataFrame({f"col{x}": [1,2,3] for x in ['A', 'B', 'C']})
+
+    @pytest.mark.parametrize(
+        argnames=["col_transformer__columns", "expected"],
+        argvalues=[
+            ([["colA"]], ["colA"]),
+            ([["colA"], ["colA", "colB"]], ["colA", "colB"]),
+            ([["colA"], ("colA", "colB")], ["colA", "colB"]),
+        ]
+    )
+    def test_feature_names_in(self, col_transformer__columns, expected):
+        fake_column_transformer = create_autospec(ColumnTransformer, instance=True)
+        fake_column_transformer._columns = col_transformer__columns
+        fake_column_transformer.remainder = 'drop'
+        fake_pipeline = Pipeline([("preprocessing", fake_column_transformer)])
+
+        me = MarginalEffects(fake_pipeline)
+
+        assert isinstance(me.feature_names_in, list)
+        assert list(sorted(expected)) == list(sorted(me.feature_names_in))

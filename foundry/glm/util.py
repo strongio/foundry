@@ -1,8 +1,7 @@
 from typing import Optional
 
 import torch
-from torch import distributions
-from torch.distributions import transforms, constraints
+from torch.distributions import transforms
 
 
 class SoftmaxKp1:
@@ -25,43 +24,6 @@ class SoftmaxKp1:
 class SigmoidTransformForClassification(transforms.SigmoidTransform):
     def get_param_dim(self, y_dim: int) -> int:
         return y_dim - 1
-
-
-class _MultinomialStrict(constraints.Constraint):
-    is_discrete = True
-    event_dim = 1
-
-    def __init__(self, upper_bound):
-        self.upper_bound = upper_bound
-
-    def check(self, x):
-        return (x >= 0).all(dim=-1) & (x.sum(dim=-1) == self.upper_bound)
-
-
-class Multinomial(distributions.Multinomial):
-    def __init__(self,
-                 total_count: torch.Tensor,
-                 probs: Optional[torch.Tensor] = None,
-                 logits: Optional[torch.Tensor] = None,
-                 validate_args: Optional[bool] = None):
-
-        # the base class doesn't support inhomogenous total_count; but it checks this by checking if it's a single
-        # number; since Family will pass a tensor even when all values are identical, we add this step to suppo that
-        if isinstance(total_count, torch.Tensor):
-            first_el = total_count.view(-1)[0].item()
-            if (first_el == total_count).all() and first_el.is_integer():
-                total_count = int(first_el)
-
-        super().__init__(
-            total_count=total_count,
-            probs=probs,
-            logits=logits,
-            validate_args=validate_args
-        )
-
-    @constraints.dependent_property(is_discrete=True, event_dim=1)
-    def support(self):
-        return _MultinomialStrict(self.total_count)
 
 
 class NoWeightModule(torch.nn.Module):

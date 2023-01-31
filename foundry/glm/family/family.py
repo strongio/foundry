@@ -1,12 +1,23 @@
 import inspect
-from typing import Callable, Dict, Type, Optional, Tuple, Sequence
+from dataclasses import dataclass, asdict
+from typing import Callable, Dict, Type, Optional, Tuple, Sequence, Union
 from warnings import warn
 
 import torch
 from torch import distributions
 
-from .util import log1mexp
-from foundry.util import to_2d, is_invalid, to_1d
+from foundry.util import is_invalid, to_1d, to_2d, log1mexp
+
+
+@dataclass
+class FamilyArgs:
+    distribution_cls: Type[torch.distributions.Distribution]
+    params_and_links: Dict[str, Callable]
+    supports_predict_proba: Optional[bool] = None
+    from_y: Sequence[str] = ()
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 class Family:
@@ -17,26 +28,26 @@ class Family:
     def __init__(self,
                  distribution_cls: Type[torch.distributions.Distribution],
                  params_and_links: Dict[str, Callable],
-                 supports_predict_proba: Optional[bool] = None):
+                 supports_predict_proba: Optional[bool] = None,
+                 from_y: Sequence[str] = ()):
         """
-
         :param distribution_cls: A distribution class.
         :param params_and_links: A dictionary whose keys are names of distribution-parameters (i.e. init-args for the
          distribution-class and values are (inverse-)link functions.
         :param supports_predict_proba: Does this distribution support predicting probabilities for its values? Default
          is determined by whether the distribution has a ``probs`` attribute.
+        :param from_y: :class:`foundry.glm.Glm` will call this family with the values in the ``X`` dict, to create an
+         instance of the distribution. However, some torch distributions take values at ``__init__`` that are not very
+         natural to include in model-matrices, but are instead traditionally included as part of the target (most
+         notably, Binomial/Multinomial "total_count"). This argument will indicate to the Glm the values in the y-dict
+         that, if present, should be moved from the y-dict to to the X-dict, to be included in the family call.
         """
         self.distribution_cls = distribution_cls
         self.params_and_links = params_and_links
 
         # supports_predict_proba:
-        has_probs_attr = hasattr(self.distribution_cls, 'probs')
         if supports_predict_proba is None:
-            supports_predict_proba = has_probs_attr
-        if supports_predict_proba and not has_probs_attr:
-            raise TypeError(
-                f"`supports_predict_proba=True`, but {self.distribution_cls.__name__} doesn't have a `probs` attr."
-            )
+            supports_predict_proba = ('probs' in self.params_and_links)
         self.supports_predict_proba = supports_predict_proba
 
         # if distribution has `total_count` (binomial/multinomial) then we can't fully support classification;
@@ -45,6 +56,9 @@ class Family:
             p.name for p in inspect.signature(self.distribution_cls.__init__).parameters.values()
         )
         self.has_total_count = 'total_count' in init_argnames
+
+        # y-values to pass to __call__
+        self.from_y = from_y
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.distribution_cls.__name__})"
@@ -55,8 +69,8 @@ class Family:
 
     def __call__(self, **kwargs) -> torch.distributions.Distribution:
         dist_kwargs = {}
-        for p, ilink in self.params_and_links.items():
-            dist_kwargs[p] = ilink(kwargs.pop(p))
+        for p, inverse_link in self.params_and_links.items():
+            dist_kwargs[p] = inverse_link(kwargs.pop(p))
         dist_kwargs.update(kwargs)
         return self.distribution_cls(**dist_kwargs)
 
@@ -66,9 +80,13 @@ class Family:
                          distribution: distributions.Distribution) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Standardize the shape of value and weight so they match the distribution
+
+        The shape of the returned value and weight depend on the batch_shape of the distribution.
         """
+        # Check for nans and infs
         self._raise_invalid_values(value)
 
+        # Evenly weighted if not defined
         if weight is None:
             weight = torch.ones_like(value)
 
@@ -81,10 +99,12 @@ class Family:
             value = to_2d(value)
             weight = to_2d(weight)
         else:
-            raise NotImplementedError
+            raise NotImplementedError("distribution batch_shape has more than 2 dimensions")
 
+        # Check that weights are strictly positive
         if (weight <= 0).any():
             raise ValueError("Some weight <= 0")
+        # Check that value and weight shapes have the same length
         if weight.shape[0] != value.shape[0]:
             raise ValueError(f"weight.shape[0] is {weight.shape[0]} but value.shape[0] is {value.shape[0]}")
 
@@ -160,16 +180,19 @@ class Family:
 
 
 def _maybe_method(obj: any, method_nm: str, fallback_value: any = None, *args, **kwargs) -> any:
-    """
-    Try to call a method of an object. If it's not a method of that object, or its a NotImplemented method, return a
-     default value.
+    """ Get a method called with *args, **kwargs, from an object.
 
-    :param obj: Object
-    :param method_nm: Name of method
-    :param fallback_value: What to return if non-existent or not implemented.
-    :param args: Arguments to method
-    :param kwargs: Kwargs to method.
-    :return: Return value of method, or `fallback_value`.
+    This function gets the method specified by method_nm from the obj object.
+    If the method is not callable, or it is not a method of the object, the function returns the fallback_value.
+    Otherwise, the function attempts to call the method with *args and **kwargs and returns the returned value.
+    If there is a NotImplementedError, the function returns the fallback value.
+
+    :param obj: any object
+    :param method_nm: a string reperesenting the name of method
+    :param fallback_value: what to return if non-existent or not implemented.
+    :param args: a tuple of arguments to pass to the method
+    :param kwargs: a dic of kwargs to pass to the method.
+    :return: method(*args, **kwargs), or `fallback_value`.
     """
     method = getattr(obj, method_nm, False)
     if not method or not callable(method):

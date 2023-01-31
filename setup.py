@@ -19,7 +19,14 @@ setuptools.setup(
     python_requires='>=3.7',
     extras_require={
         'dev': [
+            'jupytext',
+            'notebook',
             'pytest',
+            'requests',
+            'plotnine',
+        ],
+        'docs' : [
+            'requests'
         ]
     }
 )
