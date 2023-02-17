@@ -268,7 +268,7 @@ class MarginalEffects:
     def to_dataframe(self) -> pd.DataFrame:
         if self._dataframe is None:
             raise RuntimeError("This `MarginalEffects()` needs to be called on a dataset first.")
-        return self._dataframe
+        return self._dataframe.copy()
 
     def plot(self,
              x: Optional[str] = None,
@@ -287,17 +287,29 @@ class MarginalEffects:
         facets = list(facets or [])
 
         data = self.to_dataframe()
-        if len(self.config['pred_colnames']) > 1:
-            data = data.melt(
-                id_vars=[c for c in data if c not in self.config['pred_colnames']],
-                var_name='prediction',
-                value_name='predicted',
-                value_vars=self.config['pred_colnames']
-            )
-            facets.append('prediction')
 
         # available default features:
         available_default_features = list(self.config['vary_features']) + list(self.config['groupby_features'])
+
+        group_by_prediction_col = False
+        if len(self.config['pred_colnames']) > 1:
+            assert 'prediction_col' not in data.columns
+            data = data.melt(
+                id_vars=[c for c in data if c not in self.config['pred_colnames']],
+                var_name='prediction_col',
+                value_name='predicted',
+                value_vars=self.config['pred_colnames']
+            )
+            if (data['prediction_col'].nunique() > 9) and ('class' not in self.config['pred_colnames'][0]):
+                # a common use-case for multiple prediction columns is predict_posterior, where we have 100s of
+                # predictions and it doesn't make sense to map them to color/facets
+                group_by_prediction_col = True
+                warn(
+                    "Many prediction columns, will map to group but not color/facets; you can override this by setting "
+                    "color='prediction_col' or facets='prediction_col'"
+                )
+            else:
+                available_default_features.append('prediction_col')
 
         # if x is set, that's not an available default feature:
         if x:
@@ -343,6 +355,13 @@ class MarginalEffects:
                 warn(f"Adding {available_default_features} to `facets`")
                 facets.extend(available_default_features)
 
+        if group_by_prediction_col:
+            if aes_kwargs['group'] == '1':
+                aes_kwargs['group'] = 'prediction_col'
+            else:
+                data['_group'] = data[aes_kwargs['group']].astype('str') + data['prediction_col'].astype('str')
+                aes_kwargs['group'] = '_group'
+
         plot = (
                 ggplot(data, aes(**aes_kwargs)) +
                 geom_hline(yintercept=0) +
@@ -350,9 +369,11 @@ class MarginalEffects:
                 theme(figure_size=(8, 6), subplots_adjust={'wspace': 0.10})
         )
         if pd.api.types.is_categorical_dtype(data[x.replace('_binned', '')]):
+            if group_by_prediction_col:
+                raise RuntimeError("Please explicitly map 'prediction_col' to color or facet.")
             plot += geom_col()
         else:
-            plot += geom_line()
+            plot += geom_line(alpha=.50 if group_by_prediction_col else 1)
 
         if include_actuals is None:
             include_actuals = 'actual' in self._dataframe.columns

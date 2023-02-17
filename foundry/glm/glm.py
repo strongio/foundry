@@ -1,3 +1,4 @@
+import copy
 import os
 from time import sleep
 from typing import Union, Sequence, Optional, Callable, Tuple, Dict
@@ -695,22 +696,82 @@ class Glm(BaseEstimator):
             else:
                 type = 'mean'
 
+        x_dict, kwargs = self._prepare_predict(X=X, kwargs_as_is=kwargs_as_is, **kwargs)
+
+        result = self._predict_from_x_dict(x_dict=x_dict, type_=type, **kwargs)
+
+        return result
+
+    @torch.inference_mode()
+    def _prepare_predict(self, X: ModelMatrix, kwargs_as_is: Union[bool, dict] = False, **kwargs) -> Tuple[dict, dict]:
         x_dict, *_ = self._build_model_mats(X=X, y=None)
         if 'validate_args' in kwargs:
             x_dict['validate_args'] = kwargs.pop('validate_args')
+
+        if not isinstance(kwargs_as_is, dict):
+            kwargs_as_is = {k: kwargs_as_is for k in kwargs}
+        for k in list(kwargs):
+            if not kwargs_as_is.get(k, False) and is_array(kwargs[k]):
+                kwargs[k] = to_2d(to_tensor(kwargs[k], **get_to_kwargs(self.module_)))
+
+        return x_dict, kwargs
+
+    @torch.inference_mode()
+    def _predict_from_x_dict(self, x_dict: dict, type_: str, **kwargs) -> np.ndarray:
         dist_kwargs = self._get_family_kwargs(**x_dict)
         dist = self.family(**dist_kwargs)
-        result = getattr(dist, type)
+        result = getattr(dist, type_)
         if callable(result):
-            if not isinstance(kwargs_as_is, dict):
-                kwargs_as_is = {k: kwargs_as_is for k in kwargs}
-            for k in list(kwargs):
-                if not kwargs_as_is.get(k, False) and is_array(kwargs[k]):
-                    kwargs[k] = to_2d(to_tensor(kwargs[k], **get_to_kwargs(self.module_)))
             result = result(**kwargs)
         elif kwargs:
-            warn(f"Ignoring {set(kwargs)}, `{dist.__class__.__name__}.{type}` not callable.")
+            warn(f"Ignoring {set(kwargs)}, `{type(dist).__name__}.{type_}` not callable.")
         return result.numpy()
+
+    @torch.no_grad()
+    def posterior_predict(self,
+                          X: ModelMatrix,
+                          type: str = 'mean',
+                          kwargs_as_is: Union[bool, dict] = False,
+                          n_iters: int = 500,
+                          collate_fn: Optional[callable] = None,
+                          **kwargs) -> np.ndarray:
+        """
+        Generate predictions from the model's (MAP) posterior.
+
+        :param X: An array or dictionary of arrays.
+        :param type: The type of the prediction -- i.e. the attribute to be extracted from the resulting
+         ``torch.Distribution``. Default is to predict the mean of the distribution (note this differs from the default
+         in ``predict`` since that method follows sklearn behavior for classifiers and predicts the argmax).
+        :param kwargs_as_is: See documentation in ``predict()``
+        :param n_iters: How many samples to draw, default 500.
+        :param collate_fn: A function that will take the sampled output as a list of length ``n_iters`` and
+         stack/concatenate into an array. Default is to create an array that is ``orig_shape + (n_iters,)``, unless
+         the output from ``predict`` has shape ``(n_records, 1)``, i which case will create an array with
+         ``(n_records, n_iters)``.
+        :param kwargs: Keyword arguments to pass if ``type`` is callable. See also ``kwargs_as_is``.
+        :return: A ndarray of predictions, see ``collate_fn``.
+        """
+        if self._coef_mvnorm_ is None:
+            raise RuntimeError("Must call ``estimate_laplace_coefs()`` first.")
+        x_dict, kwargs = self._prepare_predict(X=X, kwargs_as_is=kwargs_as_is, **kwargs)
+
+        samples = self._coef_mvnorm_.sample((n_iters,))
+        orig = copy.deepcopy(self.module_)
+        try:
+            out = []
+            for sample in tqdm(samples.T, delay=10):
+                self._set_all_params(sample)
+                out.append(self._predict_from_x_dict(x_dict, type_=type, **kwargs))
+        finally:
+            self.module_ = orig
+
+        if collate_fn is None:
+            if len(out[0].shape) > 2 or out[0].shape[-1] > 1:
+                collate_fn = lambda x: np.stack(x, -1)
+            else:
+                collate_fn = np.concatenate
+
+        return collate_fn(out)
 
     def _get_penalty(self) -> torch.Tensor:
         """
@@ -774,26 +835,54 @@ class Glm(BaseEstimator):
                 fake_cov = torch.diag(torch.diag(hess).pow(-1).clip(min=1E-5))
                 self._coef_mvnorm_ = torch.distributions.MultivariateNormal(means, covariance_matrix=fake_cov)
 
-    def _estimate_laplace_coefs(self,
-                                X: ModelMatrix,
-                                y: ModelMatrix,
-                                sample_weight: Optional[np.ndarray] = None
-                                ) -> Tuple[Sequence[str], torch.Tensor, torch.Tensor]:
+    def _get_all_params_and_names(self) -> Tuple[Sequence[np.ndarray], Sequence[torch.Tensor]]:
+        """
+        Get all params as a list, and their names as a matching list of ndarrays w/same-shape
+        """
         all_param_names = []
         all_params = []
         for dp in self.family.params:
             for nm, param_values in self.module_[dp].named_parameters():
                 param_names = self._module_param_names_[dp][nm]
                 assert param_names.shape == param_values.shape, f"param_names.shape!=param_values.shape for {dp}.{nm}"
-                all_param_names.extend(f"{dp}__{pnm}" for pnm in param_names.reshape(-1))
-                all_params.append(param_values)  # TODO: any way to assert reshape(-1) matches internals of hessian?
-        means = torch.cat([p.reshape(-1) for p in all_params])
+                all_param_names.append(param_names)
+                all_params.append(param_values)
 
+        return all_param_names, all_params
+
+    @torch.no_grad()
+    def _set_all_params(self, unrolled: torch.Tensor):
+        """
+        ``_estimate_laplace_coefs()`` provides names, means, hess that are 'unrolled' from the nested structure in
+        ``self.module_``. This function takes a 1d tensor with that same unrolled structure, and puts it back into
+        ``self.module_``.
+        """
+        start_ = 0
+        for dp in self.family.params:
+            for nm, param_values in self.module_[dp].named_parameters():
+                end_ = start_ + param_values.numel()
+                param_values[:] = unrolled[start_:end_]
+                start_ = end_
+
+    def _estimate_laplace_coefs(self,
+                                X: ModelMatrix,
+                                y: ModelMatrix,
+                                sample_weight: Optional[np.ndarray] = None
+                                ) -> Tuple[Sequence[str], torch.Tensor, torch.Tensor]:
+        # get all params as a list, and their names as a matching list:
+        all_param_names, all_params = self._get_all_params_and_names()
+
+        # get the log-prob -> hessian:
         x_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
         log_prob = self.get_log_prob(x_dict=x_dict, lp_dict=lp_dict, mean=False)
         hess = hessian(output=-log_prob.squeeze(), inputs=all_params, allow_unused=True, progress=False)
 
-        return all_param_names, means, hess
+        # flatten out the params and names so that names, means, and hess all match:
+        # TODO: any way to assert reshape(-1) matches internals of `hessian()`?
+        means = torch.cat([p.reshape(-1) for p in all_params])
+        all_param_names_flat = list(np.concatenate([pn.reshape(-1) for pn in all_param_names]))
+
+        return all_param_names_flat, means, hess
 
 
 def family_from_string(family: str, y: Optional[dict] = None) -> Family:
