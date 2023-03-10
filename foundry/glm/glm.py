@@ -275,6 +275,7 @@ class Glm(BaseEstimator):
             # search:
             if kwargs.get('verbose', True):
                 print("GridSearchCV...")
+            cv_kwargs = cv_kwargs or {}
             gcv = GridSearchCV(
                 estimator=self,
                 param_grid={'penalty': penalties},
@@ -290,6 +291,8 @@ class Glm(BaseEstimator):
             self.set_params(penalty=best_penalty, _warm_start=None)
             return self._fit(X=X, y=y, **kwargs)
         else:
+            if cv_kwargs:
+                warn("Ignoring `cv_kwargs`, penalty is scalar.")
             return self._fit(X=X, y=y, sample_weight=sample_weight, **kwargs)
 
     @retry(retry=retry_if_exception_type(FitFailedException), reraise=True, stop=stop_after_attempt(N_FIT_RETRIES + 1))
