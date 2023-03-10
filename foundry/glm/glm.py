@@ -139,7 +139,7 @@ class Glm(BaseEstimator):
      columns, these can be functions that takes the data and return the relevant columns: e.g.
      ``col_mapping={'loc':sklearn.compose.make_column_selector('^col+.'), 'scale':[col1]}``.
     :param sparse_mm_threshold: Density threshold for creating a sparse model-matrix. If X has density less than this,
-     the model-matrix will be sparse; otherwise it will be dense. Default .05.
+     the model-matrix will be sparse; otherwise it will be dense. Default 0, meaning never use sparse tensors.
     """
     family_names = family_names
 
@@ -147,7 +147,7 @@ class Glm(BaseEstimator):
                  family: Union[str, Family],
                  penalty: Union[float, Sequence[float], Dict[str, float]] = 0.,
                  col_mapping: Union[list, dict, None] = None,
-                 sparse_mm_threshold: float = .01,
+                 sparse_mm_threshold: float = 0.0,
                  _warm_start: Optional[dict] = None):
 
         self.family = family
