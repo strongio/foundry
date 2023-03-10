@@ -127,7 +127,7 @@ class MarginalEffects:
         :param groupby_features: Strings indicating the feature(s) to group/segment on, so as to observe different
          effects per segment. By default will be binned by passing to :function:`foundry.evaluation.binned`. You can
          pass to this function yourself to manually control/remove binning.
-        :param vary_features_aggfun: The varying feature(s) will be binned, then within each bin we need to convert
+        :param vary_features_aggfun: Numeric varying feature(s) will be binned, then within each bin we need to convert
          back to numeric before plugging into the model. This string indicates how to do so (default: mean). Either an
          aggregation that will be applied, or 'mid' to use the midpoint of the bin. The latter will be used regardless
          when no actual data exists in that bin. This argument can also be a dictionary with keys being feature-names.
@@ -139,15 +139,15 @@ class MarginalEffects:
          effect if ``marginalize_aggfun` is False/None.
         :param predict_kwargs: Keyword-arguments to pass to the pipeline's ``predict`` method.
         """
+        X = X.copy(deep=False)
         if isinstance(marginalize_aggfun, str) and marginalize_aggfun.startswith('downsample'):
             downsample_int = int(marginalize_aggfun.replace('downsample', '').rstrip('_'))
-            idx = np.random.choice(X.shape[0], size=downsample_int, replace=False)
-            X = _safe_indexing(X, idx)
-            if y is not None:
-                y = _safe_indexing(y, idx)
+            if X.shape[0] > downsample_int:
+                idx = np.random.choice(X.shape[0], size=downsample_int, replace=False)
+                X = _safe_indexing(X, idx)
+                if y is not None:
+                    y = _safe_indexing(y, idx)
             marginalize_aggfun = False
-        else:
-            X = X.copy(deep=False)
 
         # validate/standardize args:
         vary_features = self._standardize_maybe_binned(X, vary_features)
@@ -175,7 +175,6 @@ class MarginalEffects:
         )
 
         # vary features ----
-        # TODO: this gets ignored for categorical features
         default = vary_features_aggfun.pop('_default', 'mean') if isinstance(vary_features_aggfun, dict) else 'mean'
         vary_features_aggfuns = self._standardize_maybe_dict(
             maybe_dict=vary_features_aggfun,
