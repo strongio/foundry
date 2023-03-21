@@ -23,7 +23,8 @@ from foundry.glm.distributions import (
     Multinomial,
     Exponential,
     Weibull,
-    CeilingWeibull
+    CeilingWeibull,
+    ZeroInflatedPoisson
 )
 from foundry.glm.family import Family, SurvivalFamily, FamilyArgs
 from foundry.glm.util import NoWeightModule, Stopping, SigmoidTransformForClassification, SoftmaxKp1
@@ -112,6 +113,13 @@ family_names = {
             'concentration': transforms.ExpTransform(),
             'ceiling': transforms.SigmoidTransform()
         }
+    ),
+    'zero_inflated_poisson': FamilyArgs(
+      ZeroInflatedPoisson,
+      {
+        'prob_zero': transforms.SigmoidTransform(),
+        'rate': transforms.ExpTransform()
+      }
     )
 }
 family_names['gaussian'] = family_names['normal']
