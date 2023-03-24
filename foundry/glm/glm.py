@@ -24,7 +24,10 @@ from foundry.glm.distributions import (
     Exponential,
     Weibull,
     CeilingWeibull,
-    ZeroInflatedPoisson
+    ZeroInflatedPoisson,
+    ZeroInflatedNegativeBinomial,
+    HurdlePoisson,
+    HurdleNegativeBinomial
 )
 from foundry.glm.family import Family, SurvivalFamily, FamilyArgs
 from foundry.glm.util import NoWeightModule, Stopping, SigmoidTransformForClassification, SoftmaxKp1
@@ -119,6 +122,29 @@ family_names = {
       {
         'prob_zero': transforms.SigmoidTransform(),
         'rate': transforms.ExpTransform()
+      }
+    ),
+    'zero_inflated_negative_binomial': FamilyArgs(
+      ZeroInflatedNegativeBinomial,
+      {
+        'prob_zero': transforms.SigmoidTransform(),
+        'loc': transforms.ExpTransform(),
+        'dispersion': transforms.ExpTransform()
+      }
+    ),
+    'hurdle_poisson': FamilyArgs(
+      HurdlePoisson,
+      {
+        'prob_zero': transforms.SigmoidTransform(),
+        'rate': transforms.ExpTransform()
+      }
+    ),
+    'hurdle_negative_binomial': FamilyArgs(
+      HurdleNegativeBinomial,
+      {
+        'prob_zero': transforms.SigmoidTransform(),
+        'loc': transforms.ExpTransform(),
+        'dispersion': transforms.ExpTransform()
       }
     )
 }
