@@ -45,7 +45,7 @@ class Hlm(Glm):
     }
 
     def __init__(self,
-                 family: Union[str, Family],
+                 family: Union[str, 'HlmFamily'],
                  fixeffs: Sequence[Union[str, callable]],
                  raneff_design: Dict[str, Sequence[Union[str, callable]]],
                  raneff_covariance: Union[dict, str, Covariance] = 'full_rank',
@@ -82,11 +82,18 @@ class Hlm(Glm):
     def _init_col_mapping(self, X: ModelMatrix):
         if not isinstance(X, pd.DataFrame):
             raise NotImplementedError("Currently only DataFrame X supported")
-        # [dist_param, *gfs, group_ids]
+        # predictors of fixed effects:
         col_mapping = {self.family.loc_param: self.fixeffs}
+
+        # predictors of each random-effect:
+        assert self.family.loc_param not in self.raneff_design
         col_mapping.update(self.raneff_design)
+
+        # each grouping-factor has a column specifying which group-id that row belongs to:
         assert 'group_ids' not in col_mapping
         col_mapping['group_ids'] = list(self.raneff_design)
+
+        # todo: call super?
         self.to_slice_dict_ = ToSliceDict(mapping=col_mapping)
         self.to_slice_dict_.fit(X)
 
@@ -142,7 +149,7 @@ class Hlm(Glm):
 
     def _get_module_num_outputs(self, y: np.ndarray, dist_param_name: str) -> int:
         if dist_param_name in self.raneff_covariance:
-            return self.raneff_covariance.get_num_params(len(self.raneff_design[dist_param_name]))
+            return self.raneff_covariance.get_param_dim(len(self.raneff_design[dist_param_name]))
         return super()._get_module_num_outputs(y=y, dist_param_name=dist_param_name)
 
     def _init_family(self, family: Union[Family, str]) -> Family:
@@ -220,14 +227,16 @@ class HlmFamily(Family):
             num_sims = self.mc_likelihood if isinstance(self.mc_likelihood, int) else 500
             #    a. for one grouping factor: need to sim betas for each gf from each re_cov_gf, return mvnorm of sims
             if len(re_model_mats) == 1:
-                Xgf = re_model_mats[gf_names[0]]
+                gf_name = gf_names[0]
+                re_dist = re_distributions[gf_name]
+                Xgf = re_model_mats[gf_name]
                 Xgf = torch.cat([torch.ones_like(Xgf[:, 0]), Xgf], 1)  # TODO: intercept-only
                 white_noise = self.get_mc_white_noise(
-                    grouping_factor=gf_names[0],
+                    grouping_factor=gf_name,
                     num_sims=num_sims,
                     num_res=Xgf.shape[-1]
                 )
-                re_samples = (re_distributions[gf_names[0]].scale_tril @ white_noise.unsqueeze(-1)).squeeze(-1)
+                re_samples = (re_dist.scale_tril @ white_noise.unsqueeze(-1)).squeeze(-1)
                 yhat_r_samples = (Xgf.unsqueeze(-1) * re_samples.T.unsqueeze(0)).sum(1)
                 # y_dist = torch.distributions.Normal(loc=yhat_samples, scale=self.residual_var ** .5)
                 # integral_wrt_b_random[ p(y|b_fixed, b_random)] * p(b_random|re_cov) ]
