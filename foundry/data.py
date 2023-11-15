@@ -167,6 +167,7 @@ def simulate_data(family: str,
     total_count = kwargs.pop('total_count', None)
 
     # simulate:
+    bias = kwargs.pop('bias', 0)
     X, y, ground_truth_mat = make_regression(
         n_samples=n_samples,
         n_features=n_features,
@@ -175,9 +176,18 @@ def simulate_data(family: str,
         coef=True,
         **kwargs
     )
-    # undo squeezing and 100x:
-    y = y.reshape(n_samples, n_targets) / 100
-    ground_truth_mat = ground_truth_mat.reshape(n_features, n_targets) / 100
+    # undo squeezing:
+    y = y.reshape(n_samples, n_targets)
+    ground_truth_mat = ground_truth_mat.reshape(n_features, n_targets)
+
+    # add bias (`make_regression` only supports scalar)
+    if hasattr(bias, '__len__') and len(bias) != n_targets:
+        raise ValueError(f'bias must be scalar or length `n_targets`')
+    y = y + bias
+
+    # undo 100x
+    y /= 100
+    ground_truth_mat /= 100
 
     # create output
     feature_names = [f'x{i + 1}' for i in range(n_features)]
