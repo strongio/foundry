@@ -887,6 +887,7 @@ class Glm(BaseEstimator):
         ``self.module_``. This function takes a 1d tensor with that same unrolled structure, and puts it back into
         ``self.module_``.
         """
+        orig = copy.deepcopy(self.module_)
         start_ = 0
         for dp in self.family.params:
             for nm, param_values in self.module_[dp].named_parameters():
@@ -894,7 +895,10 @@ class Glm(BaseEstimator):
                 param_values[:] = unrolled[start_:end_]
                 start_ = end_
         if start_ != len(unrolled):
-            raise ValueError(f"Expected unrolled to have length {start_:,}, but was {len(unrolled):,}")
+            self.module_ = orig
+            raise ValueError(
+                f"Expected unrolled to have length {start_:,}, but was {len(unrolled):,}. Restored original params."
+            )
 
     def _estimate_laplace_coefs(self,
                                 X: ModelMatrix,
