@@ -40,7 +40,7 @@ class FourierFeatures(TransformerMixin, BaseEstimator):
 
         return self
 
-    def get_feature_names_out(self, feature_names_in) -> np.ndarray:
+    def get_feature_names_out(self, feature_names_in=None) -> np.ndarray:
         feature_names_in = _check_feature_names_in(self, feature_names_in)
 
         if len(feature_names_in) == 1:
