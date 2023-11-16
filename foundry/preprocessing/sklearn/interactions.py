@@ -118,7 +118,7 @@ class InteractionFeatures(TransformerMixin, BaseEstimator):
 
         return X.drop(columns=X.columns[X.columns.isin(new_cols)]).join(df_new_cols)
 
-    def get_feature_names_out(self):
+    def get_feature_names_out(self, feature_names_in=None):
         if self.feature_names_in_ is None:
             raise NotFittedError(f"This {type(self).__name__} is not fitted. Cannot get_feature_names_out.")
 

@@ -140,7 +140,7 @@ class Glm(BaseEstimator):
      columns, these can be functions that takes the data and return the relevant columns: e.g.
      ``col_mapping={'loc':sklearn.compose.make_column_selector('^col+.'), 'scale':[col1]}``.
     :param sparse_mm_threshold: Density threshold for creating a sparse model-matrix. If X has density less than this,
-     the model-matrix will be sparse; otherwise it will be dense. Default .05.
+     the model-matrix will be sparse; otherwise it will be dense. Default 0, meaning never use sparse tensors.
     """
     family_names = family_names
 
@@ -148,7 +148,7 @@ class Glm(BaseEstimator):
                  family: Union[str, Family],
                  penalty: Union[float, Sequence[float], Dict[str, float]] = 0.,
                  col_mapping: Union[list, dict, None] = None,
-                 sparse_mm_threshold: float = .01,
+                 sparse_mm_threshold: float = 0.0,
                  _warm_start: Optional[dict] = None):
 
         self.family = family
@@ -276,6 +276,7 @@ class Glm(BaseEstimator):
             # search:
             if kwargs.get('verbose', True):
                 print("GridSearchCV...")
+            cv_kwargs = cv_kwargs or {}
             gcv = GridSearchCV(
                 estimator=self,
                 param_grid={'penalty': penalties},
@@ -291,6 +292,8 @@ class Glm(BaseEstimator):
             self.set_params(penalty=best_penalty, _warm_start=None)
             return self._fit(X=X, y=y, **kwargs)
         else:
+            if cv_kwargs:
+                warn("Ignoring `cv_kwargs`, penalty is scalar.")
             return self._fit(X=X, y=y, sample_weight=sample_weight, **kwargs)
 
     @retry(retry=retry_if_exception_type(FitFailedException), reraise=True, stop=stop_after_attempt(N_FIT_RETRIES + 1))

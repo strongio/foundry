@@ -34,7 +34,7 @@ class Binned:
         self.kwargs = kwargs
 
     def __call__(self, df: pd.DataFrame) -> pd.Series:
-        if pd.api.types.is_categorical_dtype(df[self.orig_name]):
+        if isinstance(df[self.orig_name].dtype, pd.CategoricalDtype):
             return df[self.orig_name]
 
         if hasattr(self.bins, '__iter__'):
@@ -127,7 +127,7 @@ class MarginalEffects:
         :param groupby_features: Strings indicating the feature(s) to group/segment on, so as to observe different
          effects per segment. By default will be binned by passing to :function:`foundry.evaluation.binned`. You can
          pass to this function yourself to manually control/remove binning.
-        :param vary_features_aggfun: The varying feature(s) will be binned, then within each bin we need to convert
+        :param vary_features_aggfun: Numeric varying feature(s) will be binned, then within each bin we need to convert
          back to numeric before plugging into the model. This string indicates how to do so (default: mean). Either an
          aggregation that will be applied, or 'mid' to use the midpoint of the bin. The latter will be used regardless
          when no actual data exists in that bin. This argument can also be a dictionary with keys being feature-names.
@@ -139,15 +139,15 @@ class MarginalEffects:
          effect if ``marginalize_aggfun` is False/None.
         :param predict_kwargs: Keyword-arguments to pass to the pipeline's ``predict`` method.
         """
+        X = X.copy(deep=False)
         if isinstance(marginalize_aggfun, str) and marginalize_aggfun.startswith('downsample'):
             downsample_int = int(marginalize_aggfun.replace('downsample', '').rstrip('_'))
-            idx = np.random.choice(X.shape[0], size=downsample_int, replace=False)
-            X = _safe_indexing(X, idx)
-            if y is not None:
-                y = _safe_indexing(y, idx)
+            if X.shape[0] > downsample_int:
+                idx = np.random.choice(X.shape[0], size=downsample_int, replace=False)
+                X = _safe_indexing(X, idx)
+                if y is not None:
+                    y = _safe_indexing(y, idx)
             marginalize_aggfun = False
-        else:
-            X = X.copy(deep=False)
 
         # validate/standardize args:
         vary_features = self._standardize_maybe_binned(X, vary_features)
@@ -175,7 +175,6 @@ class MarginalEffects:
         )
 
         # vary features ----
-        # TODO: this gets ignored for categorical features
         default = vary_features_aggfun.pop('_default', 'mean') if isinstance(vary_features_aggfun, dict) else 'mean'
         vary_features_aggfuns = self._standardize_maybe_dict(
             maybe_dict=vary_features_aggfun,
@@ -205,7 +204,7 @@ class MarginalEffects:
             agg_kwargs['actual_lower'] = ('_actual', lambda s: s.quantile(.25, interpolation='lower'))
             agg_kwargs['actual_upper'] = ('_actual', lambda s: s.quantile(.75, interpolation='higher'))
         df_vary_grid = (X
-                        .groupby(groupby_colnames + list(vary_features_mappings.keys()))
+                        .groupby(groupby_colnames + list(vary_features_mappings.keys()), observed=False)
                         .agg(**agg_kwargs)
                         .reset_index())
         if 'actual' in df_vary_grid.columns:  # handle binary targets with low-n
@@ -229,7 +228,7 @@ class MarginalEffects:
             if df_no_vary.shape[0] > 100_000 and not self.quiet:
                 print("Consider setting `marginalize_aggfun='downsample100000'`.")
 
-            chunks = [df for _, df in df_vary_grid.groupby(list(vary_features), sort=False)]
+            chunks = [df for _, df in df_vary_grid.groupby(list(vary_features), sort=False, observed=False)]
             if not self.quiet:
                 chunks = tqdm(chunks, delay=10)
 
@@ -242,7 +241,7 @@ class MarginalEffects:
                     pred_colnames.add(col)
 
                 _df_collapsed = (_df_merged
-                                 .groupby(groupby_colnames + list(vary_features))
+                                 .groupby(groupby_colnames + list(vary_features), observed=False)
                                  .agg(**{k: (k, y_aggfun) for k in pred_colnames})
                                  .reset_index())
 
@@ -368,7 +367,7 @@ class MarginalEffects:
                 theme_bw() +
                 theme(figure_size=(8, 6), subplots_adjust={'wspace': 0.10})
         )
-        if pd.api.types.is_categorical_dtype(data[x.replace('_binned', '')]):
+        if isinstance(data[x.replace('_binned', '')].dtype, pd.CategoricalDtype):
             if group_by_prediction_col:
                 raise RuntimeError("Please explicitly map 'prediction_col' to color or facet.")
             plot += geom_col()
@@ -396,7 +395,7 @@ class MarginalEffects:
                 # `bin_fun` will be a no-op if the user passed ``raw(feature)`` or if they passed
                 # the feature and it's categorical.
                 # TODO: test this works!
-                if not pd.api.types.is_categorical_dtype(binned_feature):
+                if not isinstance(binned_feature.dtype, pd.CategoricalDtype):
                     warn(f"{fname} is not categorical, values not present in the data will be dropped.")
                 binned_fname = fname
             else:
@@ -453,7 +452,7 @@ class MarginalEffects:
                 deffy_binned = maybe_binned
             elif not isinstance(maybe_binned, str):
                 raise ValueError(f"Expected {maybe_binned} to be a string or wrapped in ``binned``.")
-            elif pd.api.types.is_categorical_dtype(data[maybe_binned]):
+            elif isinstance(data[maybe_binned].dtype, pd.CategoricalDtype):
                 deffy_binned = Binned(maybe_binned, bins=False)
             elif pd.api.types.is_numeric_dtype(data[maybe_binned]):
                 deffy_binned = Binned(maybe_binned)
@@ -499,10 +498,10 @@ class MarginalEffects:
             # creates a df with unique values of `binned_fname` and `nans` for `fname`.
             # this will then get filled with the midpoint below:
             # todo: less hacky way to do this
-            df_mapping = X.groupby(binned_fname)[fname].agg('count').reset_index()
+            df_mapping = X.groupby(binned_fname, observed=False)[fname].agg('count').reset_index()
             df_mapping[fname] = float('nan')
         else:
-            df_mapping = X.groupby(binned_fname)[fname].agg(aggfun).reset_index()
+            df_mapping = X.groupby(binned_fname, observed=False)[fname].agg(aggfun).reset_index()
 
         # for any bins that aren't actually observed, use the midpoint:
         midpoints = pd.Series([x.mid for x in df_mapping[binned_fname]])
@@ -547,11 +546,11 @@ class MarginalEffects:
                 raise NotImplementedError("TODO")
 
             # collapse:
-            df_no_vary = X.groupby(list(groupby_colnames) + single_cols).agg(**agg_kwargs).reset_index()
+            df_no_vary = X.groupby(list(groupby_colnames) + single_cols, observed=False).agg(**agg_kwargs).reset_index()
             # validate:
-            if (df_no_vary.groupby(groupby_colnames).size() > 1).any():
+            if (df_no_vary.groupby(groupby_colnames, observed=False).size() > 1).any():
                 for col in colnames_to_agg:
-                    if (df_no_vary.groupby(groupby_colnames)[col].nunique() > 1).any():
+                    if (df_no_vary.groupby(groupby_colnames, observed=False)[col].nunique() > 1).any():
                         raise ValueError(f"The aggfun {agg_kwargs[col]} did not result in 1 value per group for {col}")
                 # shouldn't generally get here:
                 raise ValueError(f"The ``marginalize_aggfun`` did not result in one row per group:\n{df_no_vary}")

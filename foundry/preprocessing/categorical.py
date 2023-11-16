@@ -14,7 +14,7 @@ class ToCategorical(TransformerMixin, BaseEstimator):
     def __init__(self):
         self.categories_ = None
 
-    def get_feature_names_out(self, feature_names_in) -> Sequence[str]:
+    def get_feature_names_out(self, feature_names_in=None) -> Sequence[str]:
         return self._feature_names_out
 
     def fit(self, X: pd.DataFrame, y=None) -> 'ToCategorical':

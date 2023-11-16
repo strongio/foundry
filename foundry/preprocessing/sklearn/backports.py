@@ -12,6 +12,8 @@ from sklearn.preprocessing import FunctionTransformer as FunctionTransformerBase
 from sklearn.utils.validation import _check_feature_names_in
 
 
+# TODO: use sklearn versions if on newer version that implements `get_feature_names_out`
+
 class FunctionTransformer(FunctionTransformerBase):
     """
     Add ``get_feature_names_out()`` to ``FunctionTransformer``
@@ -32,7 +34,7 @@ class FunctionTransformer(FunctionTransformerBase):
                 self._feature_names_out = [f'x{i}' for i in range(maybe_df.shape[1])]
         return self
 
-    def get_feature_names_out(self, feature_names_in) -> Sequence[str]:
+    def get_feature_names_out(self, feature_names_in=None) -> Sequence[str]:
         if len(feature_names_in) == len(self._feature_names_out):
             return np.asarray([
                 x if x == y else f'{x}_{y}' for x, y in zip(feature_names_in, self._feature_names_out)
@@ -46,8 +48,8 @@ class FunctionTransformer(FunctionTransformerBase):
 
 
 class SimpleImputer(SimpleImputerBase):
-    def get_feature_names_out(self, input_features=None):
-        input_features = _check_feature_names_in(self, input_features)
+    def get_feature_names_out(self, feature_names_in=None):
+        input_features = _check_feature_names_in(self, feature_names_in)
         names = input_features[~isna(self.statistics_)]
         if not self.add_indicator:
             return names
