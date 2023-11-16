@@ -118,6 +118,17 @@ family_names = {
 family_names['gaussian'] = family_names['normal']
 family_names['mvnorm'] = family_names['multivariate_normal']
 
+_posterior_predictive_cache = {}
+
+
+class _glm_pp:
+
+    def __enter__(self):
+        _posterior_predictive_cache['_enabled'] = True
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        _posterior_predictive_cache.clear()
+
 
 class Glm(BaseEstimator):
     """
@@ -143,6 +154,8 @@ class Glm(BaseEstimator):
      the model-matrix will be sparse; otherwise it will be dense. Default 0, meaning never use sparse tensors.
     """
     family_names = family_names
+
+    fixed_posterior = _glm_pp()
 
     def __init__(self,
                  family: Union[str, Family],
@@ -730,6 +743,18 @@ class Glm(BaseEstimator):
             warn(f"Ignoring {set(kwargs)}, `{type(dist).__name__}.{type_}` not callable.")
         return result.numpy()
 
+    def _sample_coef_mvnorm(self, n_iters: int, use_cache: bool = None) -> torch.Tensor:
+        if use_cache is None:
+            use_cache = _posterior_predictive_cache.get('_enabled', False)
+
+        if not use_cache:
+            return self._coef_mvnorm_.sample((n_iters,))
+
+        key = (id(self._coef_mvnorm_), n_iters)
+        if key not in _posterior_predictive_cache:
+            _posterior_predictive_cache[key] = self._sample_coef_mvnorm(n_iters=n_iters, use_cache=False)
+        return _posterior_predictive_cache[key]
+
     @torch.no_grad()
     def posterior_predict(self,
                           X: ModelMatrix,
@@ -749,7 +774,7 @@ class Glm(BaseEstimator):
         :param n_iters: How many samples to draw, default 500.
         :param collate_fn: A function that will take the sampled output as a list of length ``n_iters`` and
          stack/concatenate into an array. Default is to create an array that is ``orig_shape + (n_iters,)``, unless
-         the output from ``predict`` has shape ``(n_records, 1)``, i which case will create an array with
+         the output from ``predict`` has shape ``(n_records, 1)``, in which case will create an array with
          ``(n_records, n_iters)``.
         :param kwargs: Keyword arguments to pass if ``type`` is callable. See also ``kwargs_as_is``.
         :return: A ndarray of predictions, see ``collate_fn``.
@@ -758,11 +783,11 @@ class Glm(BaseEstimator):
             raise RuntimeError("Must call ``estimate_laplace_coefs()`` first.")
         x_dict, kwargs = self._prepare_predict(X=X, kwargs_as_is=kwargs_as_is, **kwargs)
 
-        samples = self._coef_mvnorm_.sample((n_iters,))
+        samples = self._sample_coef_mvnorm(n_iters=n_iters)
         orig = copy.deepcopy(self.module_)
         try:
             out = []
-            for sample in tqdm(samples.T, delay=10):
+            for sample in tqdm(samples, delay=10):
                 self._set_all_params(sample)
                 out.append(self._predict_from_x_dict(x_dict, type_=type, **kwargs))
         finally:
@@ -772,7 +797,7 @@ class Glm(BaseEstimator):
             if len(out[0].shape) > 2 or out[0].shape[-1] > 1:
                 collate_fn = lambda x: np.stack(x, -1)
             else:
-                collate_fn = np.concatenate
+                collate_fn = lambda x: np.concatenate(x, 1)
 
         return collate_fn(out)
 
@@ -838,20 +863,22 @@ class Glm(BaseEstimator):
                 fake_cov = torch.diag(torch.diag(hess).pow(-1).clip(min=1E-5))
                 self._coef_mvnorm_ = torch.distributions.MultivariateNormal(means, covariance_matrix=fake_cov)
 
-    def _get_all_params_and_names(self) -> Tuple[Sequence[np.ndarray], Sequence[torch.Tensor]]:
+    def _get_all_params_and_names(self) -> Tuple[Sequence[str], Sequence[np.ndarray], Sequence[torch.Tensor]]:
         """
         Get all params as a list, and their names as a matching list of ndarrays w/same-shape
         """
+        prefixes = []
         all_param_names = []
         all_params = []
         for dp in self.family.params:
             for nm, param_values in self.module_[dp].named_parameters():
+                prefixes.append(f"{dp}_{nm}")
                 param_names = self._module_param_names_[dp][nm]
                 assert param_names.shape == param_values.shape, f"param_names.shape!=param_values.shape for {dp}.{nm}"
                 all_param_names.append(param_names)
                 all_params.append(param_values)
 
-        return all_param_names, all_params
+        return prefixes, all_param_names, all_params
 
     @torch.no_grad()
     def _set_all_params(self, unrolled: torch.Tensor):
@@ -866,6 +893,8 @@ class Glm(BaseEstimator):
                 end_ = start_ + param_values.numel()
                 param_values[:] = unrolled[start_:end_]
                 start_ = end_
+        if start_ != len(unrolled):
+            raise ValueError(f"Expected unrolled to have length {start_:,}, but was {len(unrolled):,}")
 
     def _estimate_laplace_coefs(self,
                                 X: ModelMatrix,
@@ -873,7 +902,7 @@ class Glm(BaseEstimator):
                                 sample_weight: Optional[np.ndarray] = None
                                 ) -> Tuple[Sequence[str], torch.Tensor, torch.Tensor]:
         # get all params as a list, and their names as a matching list:
-        all_param_names, all_params = self._get_all_params_and_names()
+        prefixes, all_param_names, all_params = self._get_all_params_and_names()
 
         # get the log-prob -> hessian:
         x_dict, lp_dict = self._build_model_mats(X, y, sample_weight, include_y=True)
@@ -883,7 +912,10 @@ class Glm(BaseEstimator):
         # flatten out the params and names so that names, means, and hess all match:
         # TODO: any way to assert reshape(-1) matches internals of `hessian()`?
         means = torch.cat([p.reshape(-1) for p in all_params])
-        all_param_names_flat = list(np.concatenate([pn.reshape(-1) for pn in all_param_names]))
+
+        all_param_names_flat = []
+        for prefix, pns in zip(prefixes, all_param_names):
+            all_param_names_flat.extend(f"{prefix}__{pnm}" for pnm in pns.reshape(-1))
 
         return all_param_names_flat, means, hess
 
