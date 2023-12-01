@@ -20,7 +20,7 @@ setuptools.setup(
     extras_require={
         'dev': [
             'jupytext',
-            'notebook',
+            'notebook==6.5.4',
             'pytest',
             'requests',
             'plotnine',
