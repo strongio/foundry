@@ -22,12 +22,12 @@ setuptools.setup(
             'jupytext',
             # pinning these is needed because notebook>6 isn't working with jupytext
             'notebook==6.5.4',
-            'traitlets==5.9'
+            'traitlets==5.9',
             'pytest',
             'requests',
             'plotnine',
         ],
-        'docs' : [
+        'docs': [
             'requests'
         ]
     }
