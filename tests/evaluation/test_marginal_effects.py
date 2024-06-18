@@ -135,3 +135,60 @@ class TestMarginalEffects:
 
         assert isinstance(me.feature_names_in, list)
         assert list(sorted(expected)) == list(sorted(me.feature_names_in))
+
+    binned_col_A = pd.Series(
+        [
+            pd.Interval(0.999, 2.0),
+            pd.Interval(2.0, 3.0),
+        ],
+        dtype=pd.CategoricalDtype(
+            categories=[
+                pd.Interval(0.999, 2.0),
+                pd.Interval(2.0, 3.0)
+            ],
+            ordered=True
+        ),
+        name="binnedA"
+    )
+
+    @pytest.mark.parametrize(
+        argnames=["aggfun", "expected"],
+        argvalues=[
+            (
+                "mid",
+                pd.DataFrame({"binnedA": binned_col_A, "colA": [1.4995, 2.5]})
+            ),
+            (
+                "min",
+                pd.DataFrame({"binnedA": binned_col_A, "colA": [1, 3]})
+            ),
+            (
+                np.median,
+                pd.DataFrame({"binnedA": binned_col_A, "colA": [1.5, 3.0]})
+            ),
+        ]
+    )
+    def test__get_binned_feature_map(self, aggfun, expected):
+        df = (
+            self.x_data
+            .assign(
+                **{
+                    "binnedA": [
+                        pd.Interval(0.999, 2.0),
+                        pd.Interval(0.999, 2.0),
+                        pd.Interval(2.0, 3.0),
+                    ],
+                },
+            )
+            .astype({"binnedA": self.binned_col_A.dtype})
+        )
+
+        test = MarginalEffects._get_binned_feature_map(
+            df,
+            "binnedA",
+            "colA",
+            aggfun=aggfun,
+        )
+
+        print(test.dtypes, expected.dtypes)
+        assert_frame_equal(test, expected)
