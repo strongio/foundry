@@ -509,7 +509,8 @@ class MarginalEffects:
         :param binned_fname: The column name of the binned data
         :param fname: The column name of the unbinned data
         :param aggfun: the aggregation of X[fname] based on grouping by binned_fname. The special case of 'mid' will use
-        the midpoint of the bins in X[binned_fname]
+        the midpoint of the bins in X[binned_fname]. In the case that there are no actual values in a bin to aggregate, the midpoint
+        of the bin will be used.
 
         :returns: a pd.DataFrame with columns [binned_fname, fname]. The returned[fname] will contain the aggregated values.
         :raises ValueError: if fname and binned_fname are the same
@@ -526,11 +527,11 @@ class MarginalEffects:
             .groupby(
                 binned_fname,
                 group_keys=True,
-                observed=False
+                observed=False,
+                as_index=False,
             )
             [fname]
             .apply(aggfun)
-            .reset_index()
             .assign(**{
                 fname: lambda df: (
                     df
