@@ -15,7 +15,7 @@ from foundry.util import to_1d
 
 
 class Binned:
-    def __init__(self, col: str, bins: Union[int, Sequence] = 20, **kwargs):
+    def __init__(self, col: str, bins: Union[None, int, Sequence] = 20, **kwargs):
         """
         This class creates an object which can bin a pandas.Series.
         ```
