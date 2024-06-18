@@ -192,3 +192,32 @@ class TestMarginalEffects:
 
         print(test.dtypes, expected.dtypes)
         assert_frame_equal(test, expected)
+
+    def test__get_binned_feature_map_empty_bins(self):
+        df = (
+            self.x_data
+            .assign(
+                **{
+                    "binnedA": pd.Categorical(
+                        [
+                            pd.Interval(0.999, 2.0),
+                            pd.Interval(0.999, 2.0),
+                            pd.Interval(2.0, 3.0),
+                        ],
+                        categories=[
+                            pd.Interval(-np.inf, 0.999),
+                            pd.Interval(0.999, 2.0),
+                            pd.Interval(2.0, 3.0)
+                        ],
+                    )
+                },
+            )
+        )
+
+        with pytest.raises(ValueError):
+            MarginalEffects._get_binned_feature_map(
+                df,
+                "binnedA",
+                "colA",
+                "median",
+            )
