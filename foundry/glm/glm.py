@@ -360,6 +360,7 @@ class Glm(BaseEstimator):
         # 'closure' for torch.optimizer.Optimizer.step method:
         def closure():
             self.optimizer_.zero_grad()
+            # TODO: if distribution fails validation due to nans/infs, will not currently trigger FitFailedException
             loss = -self.get_log_prob(x_dict, lp_dict)
             if is_invalid(loss):
                 self._fit_failed += 1
@@ -695,8 +696,8 @@ class Glm(BaseEstimator):
         :param X: An array or dictionary of arrays.
         :param type: The type of the prediction -- i.e. the attribute to be extracted from the resulting
          ``torch.Distribution``. The default depends on the family. If ``self.family.supports_predict_proba``, and the
-         distribution doesn't have a ``total_count`` parametere (e.g. multinomial), then this method will predict the
-         class. Otherwise, this distribution will predict the mean of the distribution.
+         distribution doesn't have a ``total_count`` parameter (e.g. multinomial), then this method will predict the
+         class. Otherwise, this method will predict the mean of the distribution.
         :param kwargs_as_is: If the ``type`` is callable, then kwargs that are arrays will be converted to tensors,
          and if 1D then will be unsqueezed to 2D (unsqueezing is to avoid accidental broadcasting, wherein (e.g.) a
          distribution with batch_shape of N*1 receives a ``value`` w/shape (N,1), resulting in a (N,N) tensor,
@@ -794,7 +795,7 @@ class Glm(BaseEstimator):
             self.module_ = orig
 
         if collate_fn is None:
-            if len(out[0].shape) > 2 or out[0].shape[-1] > 1:
+            if len(out[0].shape) != 2 or out[0].shape[-1] > 1:
                 collate_fn = lambda x: np.stack(x, -1)
             else:
                 collate_fn = lambda x: np.concatenate(x, 1)
