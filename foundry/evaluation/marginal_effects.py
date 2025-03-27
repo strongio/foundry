@@ -15,7 +15,7 @@ from foundry.util import to_1d
 
 
 class Binned:
-    def __init__(self, col: str, bins: Union[int, Sequence] = 20, **kwargs):
+    def __init__(self, col: str, bins: Union[None, int, Sequence] = 20, **kwargs):
         """
         This class creates an object which can bin a pandas.Series.
         ```
@@ -504,26 +504,52 @@ class MarginalEffects:
                                 aggfun: Union[str, Callable]) -> pd.DataFrame:
         """
         Get a dataframe that maps the binned version of a feature to the aggregates of its original values.
+
+        :param X: A dataframe which contains the columns binned_fname and fname
+        :param binned_fname: The column name of the binned data
+        :param fname: The column name of the unbinned data
+        :param aggfun: the aggregation of X[fname] based on grouping by binned_fname. The special case of 'mid' will use
+        the midpoint of the bins in X[binned_fname]. In the case that there are no actual values in a bin to aggregate, the midpoint
+        of the bin will be used.
+
+        :returns: a pd.DataFrame with columns [binned_fname, fname]. The returned[fname] will contain the aggregated values.
+        :raises ValueError: if fname and binned_fname are the same
+        :raises ValueError: if there are inf or na in the resulting aggregated values.
         """
-        assert binned_fname != fname
+        if binned_fname == fname:
+            raise ValueError("binned_fname and fname cannot be the same column.")
 
         if aggfun == 'mid':
-            # creates a df with unique values of `binned_fname` and `nans` for `fname`.
-            # this will then get filled with the midpoint below:
-            # todo: less hacky way to do this
-            df_mapping = X.groupby(binned_fname, observed=False)[fname].agg('count').reset_index()
-            df_mapping[fname] = float('nan')
-        else:
-            df_mapping = X.groupby(binned_fname, observed=False)[fname].agg(aggfun).reset_index()
+            aggfun = lambda series: series.name.mid
 
-        # for any bins that aren't actually observed, use the midpoint:
-        midpoints = pd.Series([x.mid for x in df_mapping[binned_fname]])
-        if np.isinf(midpoints).any() and df_mapping[fname].isnull().any():
-            raise ValueError(
-                f"[{fname}] `inf` bin cuts cannot be used when no data present in the bin:"
-                f"{df_mapping[binned_fname][np.isinf(midpoints)]}"
+        df_mapping = (
+            X
+            .groupby(
+                binned_fname,
+                group_keys=True,
+                observed=False,
+                as_index=False,
             )
-        df_mapping[fname].fillna(midpoints, inplace=True)
+            [fname]
+            .apply(aggfun)
+            .assign(**{
+                fname: lambda df: (
+                    df
+                    [fname]
+                    .fillna(
+                        df
+                        [binned_fname]
+                        .map(lambda interval: interval.mid)
+                        .astype(float)
+                    )
+                )
+            })
+        )
+
+        with pd.option_context("mode.use_inf_as_na", True):
+            if df_mapping[fname].isna().any():
+                raise ValueError(f"aggfun resulted in invalid values: \n {df_mapping}")
+
         return df_mapping
 
     def _get_df_novary(self,

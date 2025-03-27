@@ -19,7 +19,7 @@ class TestDataFrameTransformer:
             (np.zeros((3, 2)), pd.DataFrame(np.zeros((3, 2)))),
             # convert sparse:
             (
-                    OneHotEncoder(sparse=True).fit_transform([['a'], ['b'], ['c'], ['d']]),
+                    OneHotEncoder(sparse_output=True).fit_transform([['a'], ['b'], ['c'], ['d']]),
                     pd.DataFrame(np.eye(4))
             )
         ]

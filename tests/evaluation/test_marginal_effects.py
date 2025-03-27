@@ -1,13 +1,15 @@
 from typing import Callable
-import pandas as pd
-import numpy as np
-import pytest
 from unittest.mock import create_autospec
-from pandas.testing import assert_series_equal
+
+import numpy as np
+import pandas as pd
+import pytest
+from foundry.evaluation.marginal_effects import (Binned, MarginalEffects,
+                                                 binned, raw)
+from pandas.testing import assert_frame_equal, assert_series_equal
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 
-from foundry.evaluation.marginal_effects import Binned, MarginalEffects, binned, raw
 
 class TestBinned():
     @pytest.mark.parametrize(
@@ -72,7 +74,7 @@ class TestBinned():
                 )
             ),
             (
-                False,
+                None,
                 pd.Series(list(range(20)), name="my_feature")
             )
         ],
@@ -133,3 +135,89 @@ class TestMarginalEffects:
 
         assert isinstance(me.feature_names_in, list)
         assert list(sorted(expected)) == list(sorted(me.feature_names_in))
+
+    binned_col_A = pd.Series(
+        [
+            pd.Interval(0.999, 2.0),
+            pd.Interval(2.0, 3.0),
+        ],
+        dtype=pd.CategoricalDtype(
+            categories=[
+                pd.Interval(0.999, 2.0),
+                pd.Interval(2.0, 3.0)
+            ],
+            ordered=True
+        ),
+        name="binnedA"
+    )
+
+    @pytest.mark.parametrize(
+        argnames=["aggfun", "expected"],
+        argvalues=[
+            (
+                "mid",
+                pd.DataFrame({"binnedA": binned_col_A, "colA": [1.4995, 2.5]})
+            ),
+            (
+                "min",
+                pd.DataFrame({"binnedA": binned_col_A, "colA": [1, 3]})
+            ),
+            (
+                np.median,
+                pd.DataFrame({"binnedA": binned_col_A, "colA": [1.5, 3.0]})
+            ),
+        ]
+    )
+    def test__get_binned_feature_map(self, aggfun, expected):
+        df = (
+            self.x_data
+            .assign(
+                **{
+                    "binnedA": [
+                        pd.Interval(0.999, 2.0),
+                        pd.Interval(0.999, 2.0),
+                        pd.Interval(2.0, 3.0),
+                    ],
+                },
+            )
+            .astype({"binnedA": self.binned_col_A.dtype})
+        )
+
+        test = MarginalEffects._get_binned_feature_map(
+            df,
+            "binnedA",
+            "colA",
+            aggfun=aggfun,
+        )
+
+        print(test.dtypes, expected.dtypes)
+        assert_frame_equal(test, expected)
+
+    def test__get_binned_feature_map_empty_bins(self):
+        df = (
+            self.x_data
+            .assign(
+                **{
+                    "binnedA": pd.Categorical(
+                        [
+                            pd.Interval(0.999, 2.0),
+                            pd.Interval(0.999, 2.0),
+                            pd.Interval(2.0, 3.0),
+                        ],
+                        categories=[
+                            pd.Interval(-np.inf, 0.999),
+                            pd.Interval(0.999, 2.0),
+                            pd.Interval(2.0, 3.0)
+                        ],
+                    )
+                },
+            )
+        )
+
+        with pytest.raises(ValueError):
+            MarginalEffects._get_binned_feature_map(
+                df,
+                "binnedA",
+                "colA",
+                "median",
+            )
