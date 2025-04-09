@@ -256,7 +256,7 @@ class MarginalEffects:
             df_me = pd.concat(df_me).reset_index(drop=True)
             self.config['pred_colnames'] = list(pred_colnames)
 
-        df_me['n'].fillna(0, inplace=True)
+        df_me['n'] = df_me['n'].fillna(0)
         if '_dummy' in df_me.columns:
             del df_me['_dummy']
 
@@ -523,7 +523,7 @@ class MarginalEffects:
                 f"[{fname}] `inf` bin cuts cannot be used when no data present in the bin:"
                 f"{df_mapping[binned_fname][np.isinf(midpoints)]}"
             )
-        df_mapping[fname].fillna(midpoints, inplace=True)
+        df_mapping[fname] = df_mapping[fname].fillna(midpoints)
         return df_mapping
 
     def _get_df_novary(self,
